@@ -1,0 +1,43 @@
+<!--
+  Policy for the adrkit REST API (ADR-0056 clauses 6 and 8).
+  Rendered by templatefile(); public_access switches the public-mode controls.
+  No policy here reads context.Response.Body: that breaks streaming.
+-->
+<policies>
+  <inbound>
+    <base />
+    <!-- Read-only invariant: only GET and HEAD reach the backend. Unmatched
+         methods would fail operation matching (404) before this policy runs,
+         so the API carries catch-all "/*" operations for POST, PUT, PATCH,
+         DELETE, OPTIONS, and TRACE (modules/apim, method_guard). They match,
+         and this branch answers 405 with Allow: GET, HEAD. -->
+    <choose>
+      <when condition="@(context.Request.Method != &quot;GET&quot; &amp;&amp; context.Request.Method != &quot;HEAD&quot;)">
+        <return-response>
+          <set-status code="405" reason="Method Not Allowed" />
+          <set-header name="Allow" exists-action="override">
+            <value>GET, HEAD</value>
+          </set-header>
+        </return-response>
+      </when>
+    </choose>
+%{ if public_access ~}
+    <validate-azure-ad-token tenant-id="${tenant_id}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized">
+      <audiences>
+        <audience>${audience}</audience>
+      </audiences>
+    </validate-azure-ad-token>
+    <rate-limit-by-key calls="${rate_limit_calls}" renewal-period="${rate_limit_period}" counter-key="@(&quot;rest:&quot; + (context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Subject ?? context.Request.IpAddress))" />
+%{ endif ~}
+    <set-backend-service backend-id="${backend_id}" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

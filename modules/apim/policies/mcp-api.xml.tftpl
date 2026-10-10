@@ -1,0 +1,33 @@
+<!--
+  Policy for the REST-API-as-MCP server (ADR-0056 clause 6, ADR-0055 clause 15).
+  MCP clients speak streamable HTTP, which uses POST, so the GET/HEAD guard of
+  the REST API does NOT belong here. The read-only invariant holds because
+  every tool maps to a GET operation of the REST API, and the REST API's own
+  policy still runs its guard. Tools only: no resources, no prompts.
+  A tool call also runs the REST API's policy, so the two rate-limit counters
+  are namespaced ("mcp:" here, "rest:" there): one tool call then counts once
+  against each limit instead of twice against one shared counter.
+  No policy here reads context.Response.Body: that breaks streaming.
+-->
+<policies>
+  <inbound>
+    <base />
+%{ if public_access ~}
+    <validate-azure-ad-token tenant-id="${tenant_id}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized">
+      <audiences>
+        <audience>${audience}</audience>
+      </audiences>
+    </validate-azure-ad-token>
+    <rate-limit-by-key calls="${rate_limit_calls}" renewal-period="${rate_limit_period}" counter-key="@(&quot;mcp:&quot; + (context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Subject ?? context.Request.IpAddress))" />
+%{ endif ~}
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
