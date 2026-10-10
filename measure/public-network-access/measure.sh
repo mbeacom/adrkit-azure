@@ -20,9 +20,7 @@ PNA_ARM_TIMEOUT=${PNA_ARM_TIMEOUT:-1800}
 PNA_PROBE_TIMEOUT=${PNA_PROBE_TIMEOUT:-1800}
 
 pna_arm_value() {
-  az rest --method get \
-    --url "https://management.azure.com${PNA_APIM_ID}?api-version=${PNA_API_VERSION}" \
-    --query properties.publicNetworkAccess -o tsv 2>/dev/null
+  arm_get "$PNA_APIM_ID" "$PNA_API_VERSION" 2>/dev/null | jq -r '.properties.publicNetworkAccess // empty'
 }
 
 pna_arm_is() { [ "$(pna_arm_value)" = "$1" ]; }
@@ -93,14 +91,14 @@ pna_observe() { # STEP PUBLIC_ACCESS EXPECTED
 }
 
 pna_read_outbound() {
-  local vnt subnet expected_subnet
+  local json vnt subnet expected_subnet
   expected_subnet=$(tf "$M1" output -raw integration_subnet_id)
-  vnt=$(az rest --method get \
-    --url "https://management.azure.com${PNA_APIM_ID}?api-version=${PNA_API_VERSION}" \
-    --query properties.virtualNetworkType -o tsv 2>/dev/null || true)
-  subnet=$(az rest --method get \
-    --url "https://management.azure.com${PNA_APIM_ID}?api-version=${PNA_API_VERSION}" \
-    --query properties.virtualNetworkConfiguration.subnetResourceId -o tsv 2>/dev/null || true)
+  if ! json=$(arm_get "$PNA_APIM_ID" "$PNA_API_VERSION" 2>/dev/null); then
+    record "$M1" "azapi outbound integration body took effect" ERROR "could not read the instance from ARM"
+    return 0
+  fi
+  vnt=$(printf '%s' "$json" | jq -r '.properties.virtualNetworkType // empty')
+  subnet=$(printf '%s' "$json" | jq -r '.properties.virtualNetworkConfiguration.subnetResourceId // empty')
   # ARM IDs compare case-insensitively (no ${x,,}: macOS ships bash 3.2).
   if [ "$vnt" = External ] && [ "$(lower "$subnet")" = "$(lower "$expected_subnet")" ]; then
     record "$M1" "azapi outbound integration body took effect" PASS "virtualNetworkType=External, subnet matches"
@@ -124,8 +122,21 @@ measure_public_network_access() {
     rc=0
     tf_apply "$M1" -var "public_access=$pa" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      record "$M1" "step $step apply public_access=$pa" FAIL \
-        "terraform apply exited $rc; see $M1.terraform.log (an error on azapi_update_resource is the clause 7 failure)"
+      # Only an error Terraform attributes to the publicNetworkAccess update
+      # refutes clause 7; one on the outbound update refutes the azapi
+      # integration body. Anything else (quota, auth, network, another
+      # resource) leaves the question unanswered.
+      if tf_error_attributed_to "$LAST_APPLY_LOG" azapi_update_resource.disable_public_access ||
+        tf_error_attributed_to "$LAST_APPLY_LOG" azapi_update_resource.enable_public_access; then
+        record "$M1" "step $step publicNetworkAccess update accepted" FAIL \
+          "ARM refused the azapi publicNetworkAccess update (clause 7); see $(basename "$LAST_APPLY_LOG")"
+      elif tf_error_attributed_to "$LAST_APPLY_LOG" azapi_update_resource.outbound; then
+        record "$M1" "step $step outbound integration update accepted" FAIL \
+          "ARM refused the azapi outbound integration body; see $(basename "$LAST_APPLY_LOG")"
+      else
+        record "$M1" "step $step apply public_access=$pa" ERROR \
+          "terraform apply exited $rc, errors on: $(tf_error_summary "$LAST_APPLY_LOG"); inconclusive. See $(basename "$LAST_APPLY_LOG")"
+      fi
       break
     fi
     record "$M1" "step $step apply public_access=$pa" PASS "apply succeeded"

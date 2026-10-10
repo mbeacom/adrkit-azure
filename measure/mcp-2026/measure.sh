@@ -36,7 +36,7 @@ mcp_stub_ready() {
 }
 
 measure_mcp_2026() {
-  local rc apim_id base ops url era out
+  local rc apim_id base ops url era out found_by
   log "=== $M4 (ADR-0056 fact 5 / clause 6; ADR-0055 clause 15)"
   tf_write_vars "$M4" "$(base_vars | jq --arg e "$PUBLISHER_EMAIL" '. + {publisher_email: $e}')"
   tf_init "$M4"
@@ -44,11 +44,12 @@ measure_mcp_2026() {
   rc=0
   tf_apply "$M4" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    if grep -q 'azapi_resource.mcp_tool' "$RESULTS_DIR/$M4.terraform.log"; then
+    if tf_error_attributed_to "$LAST_APPLY_LOG" azapi_resource.mcp_tool; then
       record "$M4" "MCP tool referencing operation getHello" FAIL \
-        "tool create failed; APIM may not name imported operations by operationId (TODO(openapi)); see $M4.terraform.log"
+        "tool create failed; APIM may not name imported operations by operationId (TODO(openapi)); see $(basename "$LAST_APPLY_LOG")"
     else
-      record "$M4" "apply" ERROR "terraform apply exited $rc; see $M4.terraform.log"
+      record "$M4" "apply" ERROR \
+        "terraform apply exited $rc, errors on: $(tf_error_summary "$LAST_APPLY_LOG"); inconclusive. See $(basename "$LAST_APPLY_LOG")"
     fi
     tf_destroy "$M4"
     return 0
@@ -60,9 +61,8 @@ measure_mcp_2026() {
   MCP_STUB_URL=$(tf "$M4" output -raw stub_url)
   MCP_KEY=$(tf "$M4" output -raw subscription_key)
 
-  ops=$(az rest --method get \
-    --url "https://management.azure.com${apim_id}/apis/stub/operations?api-version=2024-05-01" \
-    --query "value[].name" -o tsv 2>/dev/null | tr '\n' ' ')
+  ops=$(arm_get "${apim_id}/apis/stub/operations" 2024-05-01 2>/dev/null |
+    jq -r '.value[].name' 2>/dev/null | tr '\n' ' ')
   record "$M4" "names APIM gave the imported operations" INFO "$ops"
 
   if wait_until "$MCP_READY_TIMEOUT" 20 mcp_stub_ready; then
@@ -71,20 +71,24 @@ measure_mcp_2026() {
     record "$M4" "stub answers as plain REST" ERROR "no stub body after ${WAIT_ELAPSED}s; MCP results below may reflect that"
   fi
 
-  # Endpoint: the documented <api-path>/mcp first, then the API base.
-  MCP_URL=""
+  # Endpoint: the documented <api-path>/mcp first, then the API base, each in
+  # both eras, so an endpoint that serves only one era is still found.
+  MCP_URL="" found_by=""
   for url in "$base/mcp" "$base"; do
-    MCP_URL=$url
-    if mcp_inspector "$RESULTS_DIR/$M4.endpoint-probe.json" legacy tools/list; then
-      break
-    fi
+    for era in legacy modern; do
+      MCP_URL=$url
+      if mcp_inspector "$RESULTS_DIR/$M4.endpoint-probe.json" "$era" tools/list; then
+        found_by=$era
+        break 2
+      fi
+    done
     MCP_URL=""
   done
   if [ -z "$MCP_URL" ]; then
     MCP_URL="$base/mcp"
-    record "$M4" "MCP endpoint" INFO "neither $base/mcp nor $base answered tools/list on legacy; using $MCP_URL"
+    record "$M4" "MCP endpoint" INFO "neither $base/mcp nor $base answered tools/list in either era; using $MCP_URL"
   else
-    record "$M4" "MCP endpoint" INFO "$MCP_URL"
+    record "$M4" "MCP endpoint" INFO "$MCP_URL (first answered on $found_by)"
   fi
 
   for era in legacy modern auto; do

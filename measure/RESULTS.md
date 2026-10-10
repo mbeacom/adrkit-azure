@@ -138,7 +138,22 @@ ADR-0055 clause 15 and action item 8. Side check: the skeleton's
 | tool create against `.../operations/getHello` | |
 | raw `initialize`: status, `Mcp-Session-Id` present | |
 
-**Status:** both eras / 2025 era only / neither / inconclusive
+**Status:** both eras / 2025 era only / 2026-07-28 only / neither /
+inconclusive
+
+Read the status from the `tools/list` row (the script records PASS or FAIL per
+era independently, so any combination can appear):
+
+| legacy | modern | Status | What it means |
+| --- | --- | --- | --- |
+| PASS | PASS | both eras | APIM serves 2025-era and stateless `2026-07-28` clients. ADR-0055 clause 15's open question closes in APIM's favour. |
+| PASS | FAIL | 2025 era only | A `2026-07-28`-only client cannot use the APIM path. Say so in both ADRs and the adrkit-azure README; ADR-0055's deferred native transport (its Option B) becomes the route for modern-only clients. |
+| FAIL | PASS | 2026-07-28 only | 2025-era clients, today's majority, cannot use it. Check the legacy `.stderr` first: a 2025 failure on a gateway that serves 2026 is surprising enough to rule out a harness or endpoint problem (the endpoint probe tries both eras) before recording it. If it holds, ADR-0056 clause 6 must say APIM's MCP path is modern-only, and the README must tell 2025-era clients to wait. |
+| FAIL | FAIL | neither | Check the stub row and the endpoint row first; if both are fine, APIM's MCP path does not work with this Inspector, which refutes clause 6 as written. |
+
+`auto` should match whichever era the server accepts first; an `auto` result
+that disagrees with both explicit eras is recorded but does not change the
+status.
 
 **The era verdict rests on `tools/list`** (and the raw `initialize`). The
 stub has no backend; its answer comes from an API-level `return-response`

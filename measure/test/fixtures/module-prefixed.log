@@ -1,0 +1,6 @@
+Error: creating tool
+
+  with module.other.azapi_resource.mcp_tool,
+  on other/main.tf line 4, in resource "azapi_resource" "mcp_tool":
+   4: resource "azapi_resource" "mcp_tool" {
+

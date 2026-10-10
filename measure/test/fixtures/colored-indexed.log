@@ -1,0 +1,10 @@
+╷
+│ Error: Failed to update resource
+│
+│   with azapi_update_resource.disable_public_access[0],
+│   on main.tf line 120, in resource "azapi_update_resource" "disable_public_access":
+│  120: resource "azapi_update_resource" "disable_public_access" {
+│
+│ updating "Resource: (ResourceId ...)": PUT https://management.azure.com/...
+│ RESPONSE 400: 400 Bad Request
+╵

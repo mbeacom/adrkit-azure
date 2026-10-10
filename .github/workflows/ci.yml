@@ -64,7 +64,7 @@ jobs:
         run: terraform validate
 
   scripts:
-    name: shellcheck measure/
+    name: shellcheck and lib tests (measure/)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -76,4 +76,10 @@ jobs:
       # shellcheck is preinstalled on GitHub's Ubuntu runners. The scripts
       # create billed resources and are never run in CI; this checks them only.
       - name: shellcheck
-        run: shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh
+        run: shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh measure/test/lib_test.sh
+
+      # Unit tests for how an apply failure is attributed to a resource
+      # (which decides FAIL versus ERROR). Fixtures only; no Azure, no
+      # Terraform.
+      - name: lib tests
+        run: bash measure/test/lib_test.sh

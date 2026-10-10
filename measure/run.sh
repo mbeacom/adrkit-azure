@@ -88,8 +88,9 @@ done
 if command -v dig >/dev/null 2>&1; then dig_available=1; else dig_available=0; fi
 
 # The Azure CLI default subscription is never changed: every az call that is
-# subscription-scoped goes through azs (lib.sh), which passes --subscription,
-# and Terraform gets ARM_SUBSCRIPTION_ID. ORIG_DEFAULT_SUB is only checked
+# subscription-scoped goes through azs (lib.sh), which passes --subscription;
+# ARM reads go through arm_get (lib.sh), with a token for the selected
+# subscription's tenant; and Terraform gets ARM_SUBSCRIPTION_ID. ORIG_DEFAULT_SUB is only checked
 # (and restored if something else moved it) when the run ends.
 ORIG_DEFAULT_SUB=$(az account show --query id -o tsv 2>/dev/null) ||
   die "not logged in: run 'az login' first"
@@ -98,6 +99,16 @@ SUB_ID=$(az account show --subscription "$SUB" --query id -o tsv) ||
 SUB_NAME=$(azs account show --query name -o tsv)
 TENANT_ID=$(azs account show --query tenantId -o tsv)
 export ARM_SUBSCRIPTION_ID=$SUB_ID
+
+# The APIM measurements need an APIM publisher email and read ARM directly.
+needs_apim=0
+for m in public-network-access mcp-2026 hmac-policy; do
+  if selected "$m"; then needs_apim=1; fi
+done
+if [ "$needs_apim" -eq 1 ]; then
+  azs account get-access-token --resource https://management.azure.com/ --query expiresOn -o tsv >/dev/null 2>&1 ||
+    die "cannot get an ARM token for $SUB_NAME (az account get-access-token --subscription $SUB_ID)"
+fi
 
 if selected azure-files-swap; then
   az containerapp --help >/dev/null 2>&1 ||
@@ -110,16 +121,27 @@ RG_LOCATION=$(azs group show --name "$RG" --query location -o tsv)
 LOCATION=${LOCATION:-$RG_LOCATION}
 RG_COUNT=$(azs resource list --resource-group "$RG" --query "length(@)" -o tsv)
 
-if [ -z "$PUBLISHER_EMAIL" ]; then
-  PUBLISHER_EMAIL=$(azs account show --query user.name -o tsv)
+# Only the APIM measurements need it, so --only azure-files-swap works for a
+# service principal (whose user.name is not an email address).
+if [ "$needs_apim" -eq 1 ]; then
+  if [ -z "$PUBLISHER_EMAIL" ]; then
+    PUBLISHER_EMAIL=$(azs account show --query user.name -o tsv)
+  fi
+  case "$PUBLISHER_EMAIL" in
+  *@*.*) ;;
+  *) die "no usable publisher email ($PUBLISHER_EMAIL); pass --publisher-email" ;;
+  esac
+else
+  PUBLISHER_EMAIL="(not needed)"
 fi
-case "$PUBLISHER_EMAIL" in
-*@*.*) ;;
-*) die "no usable publisher email ($PUBLISHER_EMAIL); pass --publisher-email" ;;
-esac
 
+# Resource providers, only for what the selected measurements create.
+namespaces=()
+if [ "$needs_apim" -eq 1 ]; then namespaces+=(Microsoft.ApiManagement); fi
+if selected public-network-access; then namespaces+=(Microsoft.Network Microsoft.Web); fi
+if selected azure-files-swap; then namespaces+=(Microsoft.App Microsoft.Storage Microsoft.OperationalInsights Microsoft.Insights); fi
 providers_ok=1
-for ns in Microsoft.ApiManagement Microsoft.Network Microsoft.App Microsoft.Storage Microsoft.OperationalInsights Microsoft.Web; do
+for ns in "${namespaces[@]+"${namespaces[@]}"}"; do
   state=$(azs provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || echo unknown)
   if [ "$state" != "Registered" ]; then
     warn "resource provider $ns is $state (az provider register --namespace $ns)"

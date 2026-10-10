@@ -61,11 +61,12 @@ measure_hmac_policy() {
   rc=0
   tf_apply "$M5" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    if grep -q 'azurerm_api_management_api_policy.webhook' "$RESULTS_DIR/$M5.terraform.log"; then
+    if tf_error_attributed_to "$LAST_APPLY_LOG" azurerm_api_management_api_policy.webhook; then
       record "$M5" "APIM accepts the HMAC policy" FAIL \
-        "APIM rejected the policy document; ADR-0056 clause 9's drop condition. See $M5.terraform.log"
+        "APIM rejected the policy document; ADR-0056 clause 9's drop condition. See $(basename "$LAST_APPLY_LOG")"
     else
-      record "$M5" "apply" ERROR "terraform apply exited $rc; see $M5.terraform.log"
+      record "$M5" "apply" ERROR \
+        "terraform apply exited $rc, errors on: $(tf_error_summary "$LAST_APPLY_LOG"); inconclusive. See $(basename "$LAST_APPLY_LOG")"
     fi
     tf_destroy "$M5"
     return 0

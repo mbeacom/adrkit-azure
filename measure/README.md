@@ -32,7 +32,7 @@ a backend, and a logger, and a failure in any of them would confound the
 answer. Keep the two in sync. The script applies `public_access=false`, then
 `true`, then `false`, and after each:
 
-- polls `properties.publicNetworkAccess` from ARM (`az rest`, at the flip's own
+- polls `properties.publicNetworkAccess` from ARM (a direct GET at the flip's own
   API version) until it equals the expected value, and records how long that
   took; also records `az apim show`'s view;
 - probes `https://<gateway>/status-0123456789abcdef` from your machine.
@@ -142,10 +142,15 @@ condition, not as a harness error.
 - **Quota for APIM Standard v2** in that region. Measurements 1, 4, and 5 each
   create one instance, one at a time, so one unit of Standard v2 quota is
   enough. Check the region offers Standard v2 before you start.
-- Resource providers registered: `Microsoft.ApiManagement`,
-  `Microsoft.Network`, `Microsoft.App`, `Microsoft.Storage`,
-  `Microsoft.OperationalInsights`, `Microsoft.Web` (the APIM subnet
-  delegation). `run.sh` checks and stops if one is not.
+- Resource providers registered for what you select: `Microsoft.ApiManagement`
+  (measurements 1, 4, 5); `Microsoft.Network` and `Microsoft.Web` (the APIM
+  subnet delegation) for measurement 1; `Microsoft.App`, `Microsoft.Storage`,
+  `Microsoft.OperationalInsights`, and `Microsoft.Insights` for measurement 3.
+  `run.sh` checks only the ones the selected measurements need, and stops if
+  one is not registered.
+- For measurements 1, 4, and 5, an APIM publisher email. It defaults to the
+  signed-in user; signed in as a service principal, pass `--publisher-email`.
+  `--only azure-files-swap` needs none.
 - A subscription policy that allows shared-key storage accounts with public
   network access (measurement 3 only).
 - Tools: Terraform 1.10 or later (CI uses 1.13.3), Azure CLI with the
@@ -169,10 +174,23 @@ measure/run.sh --resource-group adrkit-measure-rg --subscription <id-or-name> \
 ```
 
 `run.sh` asks you to type the resource group's name before it creates
-anything. It never changes your Azure CLI default subscription: every
-subscription-scoped `az` call passes `--subscription` explicitly and Terraform
-gets `ARM_SUBSCRIPTION_ID`. As a safeguard, the exit handler checks the default
-is still the one you started with, and restores it if anything else moved it. Results go to `measure/results/<run id>/` (gitignored):
+anything. It never changes your Azure CLI default subscription, and works
+when the selected subscription is in a different tenant from the CLI's
+active one:
+
+- every subscription-scoped `az` call passes `--subscription` explicitly;
+- ARM reads (the `publicNetworkAccess` and integration properties, the
+  operation names) use a token from
+  `az account get-access-token --subscription <selected>`, which is issued
+  for that subscription's tenant, and call ARM with `curl`, not `az rest`
+  (which has no `--subscription` and uses the active context). The token is
+  passed to `curl` on stdin, not on its command line;
+- Terraform gets `ARM_SUBSCRIPTION_ID`.
+
+As a safeguard, the exit handler checks the default is still the one you
+started with, and restores it if anything else moved it.
+
+Results go to `measure/results/<run id>/` (gitignored):
 `summary.txt` (one line per check: PASS, FAIL, ERROR, or INFO), `run.log`,
 each root's Terraform log, and each measurement's raw evidence. **FAIL** means
 the observation contradicts what ADR-0056 assumes, and is a result. **ERROR**

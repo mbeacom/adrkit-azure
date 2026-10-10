@@ -16,10 +16,24 @@ export TF_IN_AUTOMATION=1
 export TF_INPUT=0
 
 # azs ARGS...: az pinned to the measured subscription, so the operator's
-# Azure CLI default is never changed or relied on. (az rest needs no flag: its
-# URLs carry the subscription ID. Data-plane calls with an account key need
-# none either.)
+# Azure CLI default is never changed or relied on. ARM reads that az would do
+# with az rest go through arm_get below instead. Data-plane calls with an
+# account key need no subscription.
 azs() { az "$@" --subscription "$SUB_ID"; }
+
+# arm_get RESOURCE_PATH API_VERSION: GET one ARM resource as JSON. az rest has
+# no --subscription and uses the CLI's active context, which may be another
+# tenant, so this takes a token for the selected subscription's tenant and
+# calls ARM with curl. The token goes to curl on stdin (-H @-), never argv,
+# and is fetched per call because a full run outlives one token.
+arm_get() {
+  local token
+  token=$(azs account get-access-token --resource https://management.azure.com/ \
+    --query accessToken -o tsv 2>/dev/null) || return 1
+  [ -n "$token" ] || return 1
+  printf 'Authorization: Bearer %s\n' "$token" |
+    curl -sS --fail --max-time 30 -H @- "https://management.azure.com$1?api-version=$2"
+}
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
@@ -120,14 +134,51 @@ unmark_active() {
 
 # tf_apply ROOT [ARGS...]: returns terraform's exit code; never exits. The
 # root is marked active BEFORE the apply, so a partial apply is torn down.
+# LAST_APPLY_LOG is this apply's output alone (also appended to the root's
+# cumulative log), so an error is attributed from this apply, never an
+# earlier one.
+APPLY_SEQ=0
 tf_apply() {
   local root=$1 rc=0
   shift
   mark_active "$root"
+  APPLY_SEQ=$((APPLY_SEQ + 1))
+  LAST_APPLY_LOG="$RESULTS_DIR/$root.apply$APPLY_SEQ.log"
   log "terraform apply in $root $*"
-  tf "$root" apply -auto-approve -input=false -no-color "$@" \
-    >>"$RESULTS_DIR/$root.terraform.log" 2>&1 || rc=$?
+  tf "$root" apply -auto-approve -input=false -no-color "$@" >"$LAST_APPLY_LOG" 2>&1 || rc=$?
+  cat "$LAST_APPLY_LOG" >>"$RESULTS_DIR/$root.terraform.log"
   return "$rc"
+}
+
+# tf_error_resources LOG: the resource addresses Terraform attributed errors
+# to, one per line. Terraform's diagnostic block names its resource on a line
+# of its own, "  with <address>,", optionally behind the "│" box prefix that
+# coloured output adds. A plan line such as "# <address> will be created", or
+# the address anywhere else in the log, is not an attribution.
+tf_error_resources() {
+  sed -n -E 's/^[│ ]*with ([^ ,]+),$/\1/p' "$1" 2>/dev/null
+}
+
+# tf_error_attributed_to LOG ADDRESS: true when some error in LOG is attributed
+# to ADDRESS, or to an instance of it (ADDRESS[0], ADDRESS["k"]). Exact match:
+# module.x.ADDRESS is a different resource.
+tf_error_attributed_to() {
+  local addr
+  while IFS= read -r addr; do
+    case "$addr" in
+    "$2" | "$2["*) return 0 ;;
+    esac
+  done <<EOF_RESOURCES
+$(tf_error_resources "$1")
+EOF_RESOURCES
+  return 1
+}
+
+# tf_error_summary LOG: the attributed addresses on one line, for a record.
+tf_error_summary() {
+  local r
+  r=$(tf_error_resources "$1" | sort -u | tr '\n' ' ')
+  printf '%s' "${r:-no resource attribution (provider, auth, or quota error?)}"
 }
 
 # tf_destroy ROOT: the explicit teardown step of every measurement, and what
