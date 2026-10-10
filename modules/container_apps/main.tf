@@ -171,6 +171,13 @@ resource "azurerm_container_app" "server" {
     # VNet (where APIM's integration subnet is), not from the internet.
     # external_enabled = false would limit callers to apps inside the
     # environment, which would shut APIM out.
+    #
+    # VNet-reachable is still too wide for a server that authenticates no
+    # one, so two layers narrow it to APIM alone:
+    #   1. the NSG on the Container Apps subnet (modules/network) admits
+    #      ingress traffic only from the APIM integration subnet;
+    #   2. this ip_security_restriction allows only that subnet's CIDR at
+    #      the environment's ingress proxy (an Allow rule denies all others).
     external_enabled = true
     target_port      = 8080
     transport        = "http"
@@ -178,6 +185,13 @@ resource "azurerm_container_app" "server" {
     traffic_weight {
       latest_revision = true
       percentage      = 100
+    }
+
+    ip_security_restriction {
+      name             = "apim-integration-subnet"
+      action           = "Allow"
+      ip_address_range = var.allowed_ingress_cidr
+      description      = "APIM v2 outbound integration subnet: the only intended caller."
     }
   }
 

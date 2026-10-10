@@ -43,6 +43,12 @@ variable "apim_sku" {
   }
 }
 
+variable "apim_name" {
+  description = "Optional explicit APIM name. APIM names are globally unique (<name>.azure-api.net); null derives \"<name_prefix>-adrkit-apim-<random 6>\", stable across applies."
+  type        = string
+  default     = null
+}
+
 variable "apim_capacity" {
   description = "APIM scale units."
   type        = number
@@ -176,6 +182,12 @@ variable "enable_waf" {
   description = "Public mode only: put Azure Front Door Premium with a WAF policy in front of APIM over Private Link. Off by default; it is the largest optional cost line."
   type        = bool
   default     = false
+}
+
+variable "frontdoor_endpoint_name" {
+  description = "Optional explicit Front Door endpoint name (globally unique). Null derives \"<name_prefix>-adrkit-<random 6>\". Used only when public_access && enable_waf."
+  type        = string
+  default     = null
 }
 
 variable "address_space" {

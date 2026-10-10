@@ -37,3 +37,8 @@ output "frontdoor_endpoint_hostname" {
   description = "Front Door endpoint hostname when public_access && enable_waf, otherwise null."
   value       = try(module.frontdoor[0].endpoint_hostname, null)
 }
+
+output "apim_name" {
+  description = "APIM service name (globally unique; random suffix unless apim_name was set)."
+  value       = module.apim.apim_name
+}

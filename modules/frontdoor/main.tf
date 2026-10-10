@@ -16,8 +16,18 @@ resource "azurerm_cdn_frontdoor_profile" "this" {
   tags                = var.tags
 }
 
+# Front Door endpoint names are global (<name>-<hash>.azurefd.net). A stable
+# random suffix avoids collisions; var.endpoint_name overrides it.
+resource "random_string" "endpoint_suffix" {
+  length  = 6
+  lower   = true
+  upper   = false
+  numeric = true
+  special = false
+}
+
 resource "azurerm_cdn_frontdoor_endpoint" "this" {
-  name                     = "${var.name_prefix}-adrkit"
+  name                     = coalesce(var.endpoint_name, "${var.name_prefix}-adrkit-${random_string.endpoint_suffix.result}")
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.this.id
   tags                     = var.tags
 }

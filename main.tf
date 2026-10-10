@@ -76,6 +76,7 @@ module "container_apps" {
   infrastructure_subnet_id   = module.network.container_apps_subnet_id
   virtual_network_id         = module.network.virtual_network_id
   log_analytics_workspace_id = module.observability.log_analytics_workspace_id
+  allowed_ingress_cidr       = module.network.apim_integration_subnet_prefix
 
   server_image = "${var.image_repository}:${var.image_tag}"
   sync_image   = var.sync_image
@@ -100,6 +101,7 @@ module "apim" {
   name_prefix         = var.name_prefix
   location            = var.location
   resource_group_name = azurerm_resource_group.this.name
+  apim_name           = var.apim_name
   sku                 = var.apim_sku
   capacity            = var.apim_capacity
   publisher_name      = var.apim_publisher_name
@@ -129,6 +131,7 @@ module "frontdoor" {
   name_prefix         = var.name_prefix
   location            = var.location
   resource_group_name = azurerm_resource_group.this.name
+  endpoint_name       = var.frontdoor_endpoint_name
   apim_id             = module.apim.apim_id
   apim_gateway_host   = module.apim.gateway_hostname
   tags                = local.tags

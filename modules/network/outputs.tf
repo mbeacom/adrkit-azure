@@ -4,8 +4,14 @@ output "virtual_network_id" {
 }
 
 output "container_apps_subnet_id" {
-  description = "Subnet for the Container Apps environment."
+  description = "Subnet for the Container Apps environment. Depends on its NSG association, so the environment never lands in the subnet before the inbound restriction exists."
   value       = azurerm_subnet.aca.id
+  depends_on  = [azurerm_subnet_network_security_group_association.aca]
+}
+
+output "apim_integration_subnet_prefix" {
+  description = "Address prefix of the APIM integration subnet: the only VNet source allowed to reach the server."
+  value       = local.subnets.apim
 }
 
 output "apim_integration_subnet_id" {

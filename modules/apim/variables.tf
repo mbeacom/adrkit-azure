@@ -13,6 +13,12 @@ variable "resource_group_name" {
   type        = string
 }
 
+variable "apim_name" {
+  description = "Explicit, globally unique APIM name. Null derives \"<name_prefix>-adrkit-apim-<random 6>\"."
+  type        = string
+  default     = null
+}
+
 variable "sku" {
   description = "StandardV2 or PremiumV2."
   type        = string

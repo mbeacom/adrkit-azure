@@ -5,13 +5,29 @@
 #                                         (Azure requires it at creation).
 #   2. azapi_update_resource.outbound     v2 outbound VNet integration.
 #   3. azurerm_private_endpoint.gateway   inbound private endpoint + DNS.
-#   4. azapi_update_resource.public_network_access
-#                                         the second step: publicNetworkAccess
-#                                         = Disabled (public_access = false)
-#                                         or Enabled (true).
-#   5. APIs, tools, policies, product     only after step 4 succeeds, so the
-#                                         public window in steps 1-3 never has
-#                                         an API attached.
+#   4. The publicNetworkAccess second step, as ONE of two resources, so the
+#      order relative to the policies follows the direction of the change:
+#        public_access = false: disable_public_access runs BEFORE the APIs,
+#          policies, and product bindings (they depend on it). A first apply
+#          never has an API attached during the public window of steps 1-3,
+#          and a true -> false flip closes the gateway before the public-mode
+#          policies are relaxed.
+#        public_access = true: enable_public_access runs AFTER the policies,
+#          catch-all operations, diagnostics, and product bindings (it
+#          depends on them). A false -> true flip applies Entra validation
+#          and rate limiting to the already-attached APIs before the gateway
+#          opens.
+#      Only one of the two exists at a time (count). Removing the other is a
+#      no-op: destroying an azapi_update_resource does not revert anything.
+#   5. Product bindings depend on the policies in both modes, so product
+#      subscribers never reach an API before its policy is in place.
+#
+# Residual window (public_access = true, FIRST apply only): the instance is
+# public from creation, so between an API's creation and its policy's, the
+# API exists without its policy. Every API requires a subscription key and is
+# bound to the product only after its policy, so in that window it answers
+# only to APIM's built-in all-access subscription key (an administrator
+# credential). Unmeasured; see README.
 #
 # Provider facts (see README "Verified vs unverified"):
 #   - Verified (Microsoft Learn, 2026-10-10): public network access can be
@@ -73,8 +89,18 @@ locals {
   }
 }
 
+# APIM names are global (they become <name>.azure-api.net). A stable random
+# suffix avoids collisions; var.apim_name overrides it.
+resource "random_string" "apim_suffix" {
+  length  = 6
+  lower   = true
+  upper   = false
+  numeric = true
+  special = false
+}
+
 resource "azurerm_api_management" "this" {
-  name                = "${var.name_prefix}-adrkit-apim"
+  name                = coalesce(var.apim_name, "${var.name_prefix}-adrkit-apim-${random_string.apim_suffix.result}")
   location            = var.location
   resource_group_name = var.resource_group_name
   publisher_name      = var.publisher_name
@@ -139,16 +165,17 @@ resource "azurerm_private_endpoint" "gateway" {
   depends_on = [azapi_update_resource.outbound]
 }
 
-# Step 4: the second step. Runs on every apply, so changing public_access
-# later updates the instance in place; the backend is never recreated.
-# Destroying this resource does not revert the property.
-resource "azapi_update_resource" "public_network_access" {
+# Step 4, private mode: close the gateway BEFORE anything is attached or
+# relaxed. Everything below that is attached to the instance depends on it.
+resource "azapi_update_resource" "disable_public_access" {
+  count = var.public_access ? 0 : 1
+
   type        = "Microsoft.ApiManagement/service@${local.service_api_version}"
   resource_id = azurerm_api_management.this.id
 
   body = {
     properties = {
-      publicNetworkAccess = var.public_access ? "Enabled" : "Disabled"
+      publicNetworkAccess = "Disabled"
     }
   }
 
@@ -158,8 +185,35 @@ resource "azapi_update_resource" "public_network_access" {
   ]
 }
 
+# Step 4, public mode: open the gateway only AFTER the public-mode policies,
+# the catch-all method guard, diagnostics, and product bindings exist.
+resource "azapi_update_resource" "enable_public_access" {
+  count = var.public_access ? 1 : 0
+
+  type        = "Microsoft.ApiManagement/service@${local.service_api_version}"
+  resource_id = azurerm_api_management.this.id
+
+  body = {
+    properties = {
+      publicNetworkAccess = "Enabled"
+    }
+  }
+
+  depends_on = [
+    azurerm_private_endpoint.gateway,
+    azapi_update_resource.outbound,
+    azurerm_api_management_api_policy.rest,
+    azurerm_api_management_api_operation.method_guard,
+    azapi_resource.mcp_policy,
+    azurerm_api_management_product_api.rest,
+    azapi_resource.mcp_product,
+    azurerm_api_management_diagnostic.service,
+  ]
+}
+
 # ---------------------------------------------------------------------------
-# Everything below waits for step 4.
+# Everything below waits for disable_public_access in private mode (that
+# resource has count = 0 in public mode, so the dependency is then empty).
 # ---------------------------------------------------------------------------
 
 resource "azurerm_api_management_logger" "appinsights" {
@@ -172,7 +226,40 @@ resource "azurerm_api_management_logger" "appinsights" {
     instrumentation_key = var.application_insights_key
   }
 
-  depends_on = [azapi_update_resource.public_network_access]
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
+}
+
+# The logger alone sends nothing; this service-wide diagnostic binds it.
+# Body logging is OFF (0 bytes) for every API, the MCP API included: logging
+# bodies would buffer streamed responses (ADR-0056 clause 6). No API-level
+# diagnostic overrides it.
+resource "azurerm_api_management_diagnostic" "service" {
+  identifier               = "applicationinsights"
+  api_management_name      = azurerm_api_management.this.name
+  resource_group_name      = var.resource_group_name
+  api_management_logger_id = azurerm_api_management_logger.appinsights.id
+
+  sampling_percentage       = 100
+  always_log_errors         = true
+  log_client_ip             = false
+  verbosity                 = "information"
+  http_correlation_protocol = "W3C"
+
+  frontend_request {
+    body_bytes = 0
+  }
+
+  frontend_response {
+    body_bytes = 0
+  }
+
+  backend_request {
+    body_bytes = 0
+  }
+
+  backend_response {
+    body_bytes = 0
+  }
 }
 
 resource "azurerm_api_management_backend" "server" {
@@ -183,7 +270,7 @@ resource "azurerm_api_management_backend" "server" {
   url                 = var.backend_url
   description         = "adrkit server (ADR-0055 `server` selector) in the internal Container Apps environment."
 
-  depends_on = [azapi_update_resource.public_network_access]
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
 }
 
 resource "azurerm_api_management_product" "adrkit" {
@@ -197,7 +284,7 @@ resource "azurerm_api_management_product" "adrkit" {
   subscriptions_limit   = 1
   published             = true
 
-  depends_on = [azapi_update_resource.public_network_access]
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
 }
 
 resource "azurerm_api_management_api" "rest" {
@@ -219,7 +306,7 @@ resource "azurerm_api_management_api" "rest" {
     content_value  = local.openapi_document
   }
 
-  depends_on = [azapi_update_resource.public_network_access]
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
 }
 
 resource "azurerm_api_management_api_policy" "rest" {
@@ -228,7 +315,34 @@ resource "azurerm_api_management_api_policy" "rest" {
   resource_group_name = var.resource_group_name
   xml_content         = templatefile("${path.module}/policies/rest-api.xml.tftpl", local.policy_vars)
 
-  depends_on = [azurerm_api_management_backend.server]
+  depends_on = [
+    azurerm_api_management_backend.server,
+    azapi_update_resource.disable_public_access,
+  ]
+}
+
+# Method guard, part 1. APIM matches a request to an operation before any
+# API-scope policy runs, and an unmatched method fails as 404
+# (OperationNotFound), so the API policy's 405 branch alone never fires.
+# These wildcard ("/*", documented on Microsoft Learn) operations match every
+# non-GET method so the request reaches the API policy, whose guard answers
+# 405 with "Allow: GET, HEAD". HEAD is not listed: it stays a read.
+# None of these is ever forwarded to the backend, and none is an MCP tool.
+resource "azurerm_api_management_api_operation" "method_guard" {
+  for_each = toset(["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"])
+
+  operation_id        = "method-guard-${lower(each.key)}"
+  api_name            = azurerm_api_management_api.rest.name
+  api_management_name = azurerm_api_management.this.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Reject ${each.key} (read-only API)"
+  method              = each.key
+  url_template        = "/*"
+  description         = "Catch-all so the API policy can answer 405; never forwarded."
+
+  response {
+    status_code = 405
+  }
 }
 
 resource "azurerm_api_management_product_api" "rest" {
@@ -236,6 +350,12 @@ resource "azurerm_api_management_product_api" "rest" {
   api_name            = azurerm_api_management_api.rest.name
   api_management_name = azurerm_api_management.this.name
   resource_group_name = var.resource_group_name
+
+  # Subscribers reach the API only once its policy and method guard exist.
+  depends_on = [
+    azurerm_api_management_api_policy.rest,
+    azurerm_api_management_api_operation.method_guard,
+  ]
 }
 
 # The MCP server: an API of type "mcp" (azurerm has no native resource;
@@ -257,7 +377,7 @@ resource "azapi_resource" "mcp" {
     }
   }
 
-  depends_on = [azapi_update_resource.public_network_access]
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
 }
 
 resource "azapi_resource" "mcp_tool" {
@@ -292,6 +412,8 @@ resource "azapi_resource" "mcp_policy" {
       value  = templatefile("${path.module}/policies/mcp-api.xml.tftpl", local.policy_vars)
     }
   }
+
+  depends_on = [azapi_update_resource.disable_public_access]
 }
 
 resource "azapi_resource" "mcp_product" {
@@ -300,7 +422,7 @@ resource "azapi_resource" "mcp_product" {
   parent_id = azurerm_api_management_product.adrkit.id
   body      = {}
 
-  depends_on = [azapi_resource.mcp]
+  depends_on = [azapi_resource.mcp, azapi_resource.mcp_policy]
 }
 
 # TODO(webhook): ADR-0056 clause 9's public-mode GitHub webhook (one POST that

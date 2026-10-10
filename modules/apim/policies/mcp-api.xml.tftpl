@@ -4,6 +4,9 @@
   the REST API does NOT belong here. The read-only invariant holds because
   every tool maps to a GET operation of the REST API, and the REST API's own
   policy still runs its guard. Tools only: no resources, no prompts.
+  A tool call also runs the REST API's policy, so the two rate-limit counters
+  are namespaced ("mcp:" here, "rest:" there): one tool call then counts once
+  against each limit instead of twice against one shared counter.
   No policy here reads context.Response.Body: that breaks streaming.
 -->
 <policies>
@@ -15,7 +18,7 @@
         <audience>${audience}</audience>
       </audiences>
     </validate-azure-ad-token>
-    <rate-limit-by-key calls="${rate_limit_calls}" renewal-period="${rate_limit_period}" counter-key="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Subject ?? context.Request.IpAddress)" />
+    <rate-limit-by-key calls="${rate_limit_calls}" renewal-period="${rate_limit_period}" counter-key="@(&quot;mcp:&quot; + (context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Subject ?? context.Request.IpAddress))" />
 %{ endif ~}
   </inbound>
   <backend>

@@ -23,6 +23,11 @@ variable "virtual_network_id" {
   type        = string
 }
 
+variable "allowed_ingress_cidr" {
+  description = "CIDR allowed through the server app's ingress IP restriction (the APIM integration subnet)."
+  type        = string
+}
+
 variable "log_analytics_workspace_id" {
   description = "Log Analytics workspace for environment logs."
   type        = string

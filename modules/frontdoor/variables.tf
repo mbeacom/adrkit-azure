@@ -13,6 +13,12 @@ variable "resource_group_name" {
   type        = string
 }
 
+variable "endpoint_name" {
+  description = "Explicit, globally unique Front Door endpoint name. Null derives \"<name_prefix>-adrkit-<random 6>\"."
+  type        = string
+  default     = null
+}
+
 variable "apim_id" {
   description = "APIM service resource ID (Private Link target)."
   type        = string

@@ -101,6 +101,88 @@ resource "azurerm_network_security_group" "apim" {
   # Key Vault on a v2 integrated instance are not measured.
 }
 
+# NSG on the Container Apps subnet: the server authenticates no one
+# (ADR-0055 clause 14), so the only VNet source allowed to reach the
+# environment's ingress is APIM's integration subnet. Allow rules follow
+# Microsoft Learn's inbound table for workload-profile environments
+# ("Network security groups for configuring a virtual network in Azure
+# Container Apps", read 2026-10-10): client -> subnet on 80/31080 and
+# 443/31443, Azure Load Balancer -> 30000-32767. Traffic within the subnet
+# is allowed explicitly, because the final rule denies the rest of the VNet
+# (which the default AllowVnetInBound rule would otherwise admit, peerings
+# included).
+resource "azurerm_network_security_group" "aca" {
+  name                = "${var.name_prefix}-adrkit-aca-nsg"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+
+  security_rule {
+    name                       = "allow-apim-http"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_ranges    = ["80", "31080"]
+    source_address_prefix      = local.subnets.apim
+    destination_address_prefix = local.subnets.aca
+  }
+
+  security_rule {
+    name                       = "allow-apim-https"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_ranges    = ["443", "31443"]
+    source_address_prefix      = local.subnets.apim
+    destination_address_prefix = local.subnets.aca
+  }
+
+  security_rule {
+    name                       = "allow-azure-load-balancer-probes"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "30000-32767"
+    source_address_prefix      = "AzureLoadBalancer"
+    destination_address_prefix = local.subnets.aca
+  }
+
+  security_rule {
+    name                       = "allow-intra-subnet"
+    priority                   = 130
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = local.subnets.aca
+    destination_address_prefix = local.subnets.aca
+  }
+
+  security_rule {
+    name                       = "deny-other-vnet-inbound"
+    priority                   = 4000
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "aca" {
+  subnet_id                 = azurerm_subnet.aca.id
+  network_security_group_id = azurerm_network_security_group.aca.id
+}
+
 resource "azurerm_subnet_network_security_group_association" "apim" {
   subnet_id                 = azurerm_subnet.apim.id
   network_security_group_id = azurerm_network_security_group.apim.id

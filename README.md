@@ -65,22 +65,39 @@ at the end of this file.
                 Log Analytics + Application Insights        Key Vault (GitHub App key)
 ```
 
+### The network boundary around the server
+
 The server binds `127.0.0.1` by default and authenticates no one (ADR-0055
-clause 14). This deployment sets `ADRKIT_SERVER_HOST=0.0.0.0` only because the
-environment is internal and APIM is the only route in. If you change the
-networking so that anything else can reach the app, remove that variable.
+clause 14). This deployment sets `ADRKIT_SERVER_HOST=0.0.0.0` only because
+APIM is the only route in, and three layers make that true:
+
+1. **Internal environment.** The Container Apps environment has no public
+   endpoint in either mode.
+2. **NSG on the Container Apps subnet.** Inbound from the VNet is limited to
+   the APIM integration subnet on the ingress ports (80/31080, 443/31443),
+   plus Azure Load Balancer probes (30000-32767) and traffic within the
+   subnet, following Microsoft Learn's rule table for workload-profile
+   environments. A final rule denies the rest of the VNet, so other subnets
+   and peered networks cannot reach the app. (The server's ingress has to be
+   "external" in Container Apps terms, which in an internal environment means
+   VNet-reachable; "internal" ingress would shut APIM out.)
+3. **Ingress IP restriction.** The server app's ingress allows only the APIM
+   integration subnet's CIDR.
+
+If you change the networking so that anything else can reach the app, remove
+`ADRKIT_SERVER_HOST`.
 
 ### Modules
 
 | Module | What it creates |
 | --- | --- |
-| `modules/network` | VNet; subnets for the environment, APIM integration (with NSG), and private endpoints; Private DNS zones for APIM, Files, Key Vault |
+| `modules/network` | VNet; subnets for the environment (NSG admitting only APIM), APIM integration (with NSG), and private endpoints; Private DNS zones for APIM, Files, Key Vault |
 | `modules/observability` | Log Analytics workspace, Application Insights |
 | `modules/identity_secrets` | User-assigned identity for the sync job, Key Vault (RBAC, private endpoint, public access off), Key Vault Secrets User role |
 | `modules/storage` | Storage account (public access off) with the `corpora` Files share and its private endpoint |
 | `modules/container_apps` | Environment via AVM `avm-res-app-managedenvironment` 0.5.1; server app (native `azurerm_container_app`); sync job via AVM `avm-res-app-job` 0.2.2; the environment's private DNS zone |
-| `modules/apim` | APIM v2, outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API from an OpenAPI placeholder, MCP API and tools (azapi), policies from XML templates |
-| `modules/frontdoor` | Optional Front Door Premium with WAF, Private Link origin to APIM; only when `public_access && enable_waf` |
+| `modules/apim` | APIM v2 (globally unique name: random suffix or `apim_name`), outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API from an OpenAPI placeholder with catch-all method-guard operations, MCP API and tools (azapi), policies from XML templates, Application Insights logger and service diagnostic (no body logging) |
+| `modules/frontdoor` | Optional Front Door Premium with WAF, Private Link origin to APIM (endpoint name: random suffix or `frontdoor_endpoint_name`); only when `public_access && enable_waf` |
 
 ## Prerequisites
 
@@ -166,7 +183,9 @@ Everything above, plus, on every API:
 
 - `validate-azure-ad-token` against `entra_tenant_id` and `entra_audience`
   (both required in this mode);
-- `rate-limit-by-key` keyed on the token's subject;
+- `rate-limit-by-key` keyed on the token's subject, with separate counters
+  for the REST API (`rest:`) and the MCP API (`mcp:`), because a tool call
+  runs both policies;
 - optionally (`enable_waf = true`) Azure Front Door Premium with a WAF policy,
   reaching APIM over Private Link. Off by default.
 
@@ -185,22 +204,45 @@ and only after a private endpoint exists (Microsoft Learn, verified
    (required at creation).
 2. `azapi_update_resource.outbound` sets outbound VNet integration.
 3. `azurerm_private_endpoint.gateway` and its DNS zone group are created.
-4. `azapi_update_resource.public_network_access` sets `publicNetworkAccess`
-   to `Disabled` (private mode) or `Enabled` (public mode).
-5. Only then are the APIs, MCP tools, policies, product, logger, and backend
-   created; every one of them `depends_on` step 4.
+4. The `publicNetworkAccess` step. It is one of two resources, and which one
+   exists decides where it sits relative to the policies:
+   - **`public_access = false`:** `disable_public_access` sets `Disabled`
+     **before** the APIs, policies, logger, backend, and product bindings are
+     created or changed; they all depend on it.
+   - **`public_access = true`:** `enable_public_access` sets `Enabled`
+     **after** the policies (Entra validation and rate limiting), the
+     method-guard operations, the diagnostic, and the product bindings; it
+     depends on them.
+5. In both modes the product bindings depend on the policies, so a product
+   subscriber never reaches an API before its policy exists.
 
-azurerm ignores `public_network_access_enabled` and the virtual network
-attributes after creation (`lifecycle.ignore_changes`), so a later plan does
-not revert step 4. Changing `public_access` later reruns step 4 in place.
+That makes both flips safe in one apply:
 
-**The window is real.** Between steps 1 and 4 the new instance is publicly
-addressable. It has no API attached during that window, so there is nothing to
-call, but it exists. ADR-0056 clause 7 also asks for a global deny-all
-`ip-filter` from creation; the skeleton does not add one, because a global
-deny-all would also block callers on the private endpoint and has to be
-removed again in the same apply. Ordering the APIs after step 4 is the
-mechanism here.
+- **false to true:** the attached APIs get the public-mode policies first;
+  only then does the gateway open.
+- **true to false:** the gateway closes first; only then are the public-mode
+  policies relaxed.
+
+Only one of the two resources exists at a time (`count`). Removing the other
+does nothing, because destroying an `azapi_update_resource` never reverts a
+property. azurerm ignores `public_network_access_enabled` and the virtual
+network attributes after creation (`lifecycle.ignore_changes`), so a later
+plan does not revert step 4.
+
+**The windows are real.**
+
+- *Private mode, first apply:* between steps 1 and 4 the new instance is
+  publicly addressable, with no API attached, so there is nothing to call.
+- *Public mode, first apply:* the instance is public from creation, so
+  between each API's creation and its policy's, the API exists without its
+  policy. Every API requires a subscription key and joins the product only
+  after its policy, so in that window it answers only to APIM's built-in
+  all-access subscription key, an administrator credential. Unmeasured.
+
+ADR-0056 clause 7 also asks for a global deny-all `ip-filter` from creation;
+the skeleton does not add one, because a global deny-all would also block
+callers on the private endpoint and has to be removed again in the same
+apply. The ordering above is the mechanism here.
 
 **Standard v2 caveat.** The maintainer states that Standard v2 supports
 disabling `publicNetworkAccess` once the private endpoint exists. Microsoft
@@ -216,17 +258,22 @@ Nothing in this deployment changes a decision record. Recording a person's act
 (`accept`, `approve`, `object`, `resolve`) stays a human-run adrkit CLI command
 and a pull request (ADR-0044, ADR-0051, ADR-0052).
 
-- The REST API publishes only the `GET` operations of ADR-0055's routes. Its
-  policy also answers any method other than `GET` or `HEAD` with `405` and
-  `Allow: GET, HEAD`. `/healthz` is probed inside the environment and never
-  published.
+- The REST API publishes only the `GET` operations of ADR-0055's routes.
+  APIM matches a request to an operation before API policies run, and an
+  unmatched method would end as `404 OperationNotFound`, so the API also has
+  catch-all `/*` operations for `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
+  and `TRACE`. They exist only so the API policy runs and answers `405` with
+  `Allow: GET, HEAD`; none is forwarded to the backend or exposed as a tool.
+  `/healthz` is probed inside the environment and never published.
 - The MCP API is "REST API as MCP server": tools only, each mapped to one of
   those `GET` operations. MCP's streamable HTTP transport uses `POST`, so the
   method guard is on the REST API, not the MCP API; a tool call still lands on
   a `GET` operation and passes the REST API's guard.
 - The server mounts the corpus share through a **read-only** environment
   storage definition. Only the sync job mounts it read-write.
-- No policy reads `context.Response.Body` (it breaks streaming).
+- No policy reads `context.Response.Body`, and the Application Insights
+  diagnostic logs 0 bytes of request and response bodies for every API, the
+  MCP API included (body logging would buffer streamed responses).
 - The public-mode GitHub webhook in ADR-0056 clause 9 would be the one
   non-`GET` route, and it could only **start the sync job** (ARM `jobs/start`,
   no payload forwarded, APIM's identity holding only
@@ -297,6 +344,14 @@ Unverified (nothing has been applied):
 - Whether APIM's MCP server passes MCP protocol revision `2026-07-28`.
 - Front Door's Private Link origin to APIM v2 and the managed rule set
   version.
+- That the Container Apps ingress IP restriction sees the APIM integration
+  subnet's address as the client IP (it should, since traffic stays in the
+  VNet), and that the NSG rule table is complete for this environment (it
+  follows Microsoft Learn's workload-profile table).
+- That the `/*` catch-all operations take precedence the way the method
+  guard assumes, and that APIM resolves the true/false ordering exactly as
+  described above (dependency order is Terraform's; the policy behaviour is
+  APIM's).
 - azapi schema validation of the request bodies, and azurerm's acceptance of
   `sku_name = "StandardV2_1"`: both are checked at plan time with real values,
   which CI does not do (`validate` sees variables as unknown).

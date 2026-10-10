@@ -3,6 +3,11 @@ output "apim_id" {
   value       = azurerm_api_management.this.id
 }
 
+output "apim_name" {
+  description = "APIM service name (global; includes the random suffix unless apim_name was set)."
+  value       = azurerm_api_management.this.name
+}
+
 output "gateway_url" {
   description = "Default gateway URL."
   value       = azurerm_api_management.this.gateway_url
@@ -15,7 +20,7 @@ output "gateway_hostname" {
 
 output "public_network_access" {
   description = "Value set by the second step."
-  value       = azapi_update_resource.public_network_access.body.properties.publicNetworkAccess
+  value       = var.public_access ? azapi_update_resource.enable_public_access[0].body.properties.publicNetworkAccess : azapi_update_resource.disable_public_access[0].body.properties.publicNetworkAccess
 }
 
 output "mcp_path" {
