@@ -15,3 +15,7 @@ override.tf.json
 .terraformrc
 terraform.rc
 .DS_Store
+
+# Rung-1 measurement output (raw logs can carry resource names and IDs).
+# Transcribe results into measure/RESULTS.md instead.
+measure/results/

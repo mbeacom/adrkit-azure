@@ -1,0 +1,26 @@
+<!--
+  The stub's only answer. No backend exists; every request to the stub API is
+  answered here. The MCP tool getHello maps to the GET operation, so a
+  successful tools/call returns this body.
+-->
+<policies>
+  <inbound>
+    <base />
+    <return-response>
+      <set-status code="200" reason="OK" />
+      <set-header name="Content-Type" exists-action="override">
+        <value>application/json</value>
+      </set-header>
+      <set-body>{"hello":"adrkit-measure","source":"apim-return-response"}</set-body>
+    </return-response>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
