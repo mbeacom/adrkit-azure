@@ -1,0 +1,191 @@
+variable "location" {
+  description = "Azure region for every resource. APIM, the VNet, and its integration subnet must share it."
+  type        = string
+}
+
+variable "name_prefix" {
+  description = "Short prefix for resource names. Lowercase letters and digits, 3 to 10 characters, so derived storage and Key Vault names stay within their limits."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{2,9}$", var.name_prefix))
+    error_message = "name_prefix must be 3 to 10 lowercase letters or digits, starting with a letter."
+  }
+}
+
+variable "resource_group_name" {
+  description = "Name of the resource group to create. Defaults to \"<name_prefix>-adrkit-rg\"."
+  type        = string
+  default     = null
+}
+
+variable "public_access" {
+  description = <<-EOT
+    false (default): fully private. APIM's gateway is reachable only through its
+    inbound private endpoint, and its publicNetworkAccess is set to Disabled in a
+    second step after that endpoint exists. true: the gateway stays public and
+    every API adds validate-azure-ad-token and rate-limit-by-key. The Container
+    Apps environment is internal in both modes, so flipping this never recreates
+    the backend.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "apim_sku" {
+  description = "APIM v2 tier. StandardV2 is the baseline (ADR-0056 clause 6); PremiumV2 is allowed for teams already on it. Basic v2 is not offered because the private-endpoint tier list omits it."
+  type        = string
+  default     = "StandardV2"
+
+  validation {
+    condition     = contains(["StandardV2", "PremiumV2"], var.apim_sku)
+    error_message = "apim_sku must be StandardV2 or PremiumV2."
+  }
+}
+
+variable "apim_capacity" {
+  description = "APIM scale units."
+  type        = number
+  default     = 1
+}
+
+variable "apim_publisher_name" {
+  description = "APIM publisher name (required by the service)."
+  type        = string
+  default     = "adrkit"
+}
+
+variable "apim_publisher_email" {
+  description = "APIM publisher email (required by the service)."
+  type        = string
+}
+
+variable "image_repository" {
+  description = "Container image repository for the adrkit server."
+  type        = string
+  default     = "ghcr.io/mbeacom/adrkit"
+}
+
+variable "image_tag" {
+  description = <<-EOT
+    Immutable adrkit image tag, optionally with a digest, for example
+    "v0.19.0" or "v0.19.0@sha256:<64 hex>". Required, with no default, because
+    the `server` selector this deployment runs (ADR-0055, adrkit issue #296) is
+    not released yet: no published tag contains it today. "latest" and the
+    moving major tag ("v0") are refused (ADR-0056 clause 2).
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+(@sha256:[0-9a-f]{64})?$", var.image_tag))
+    error_message = "image_tag must be an immutable vX.Y.Z tag, optionally with @sha256:<digest>. \"latest\" and moving major tags are refused."
+  }
+}
+
+variable "sync_image" {
+  description = <<-EOT
+    TODO(sync-image): image for the corpus sync job. No sync image exists yet.
+    The default is Microsoft's public Container Apps jobs quickstart sample,
+    used only so the job resource can exist; it does not implement the sync
+    and writes no corpus. Replace it once a sync image implementing ADR-0056
+    clause 4 (shallow clone, write `<key>.next/`, write .adrkit-corpus.json
+    last, two-move swap) is published.
+  EOT
+  type        = string
+  default     = "mcr.microsoft.com/k8se/quickstart-jobs:latest"
+}
+
+variable "sync_cron" {
+  description = "Cron expression (UTC) for the corpus sync job's Schedule trigger."
+  type        = string
+  default     = "*/15 * * * *"
+}
+
+variable "repos" {
+  description = <<-EOT
+    Repositories whose docs/adr corpus is synced and served. `key` is the
+    `{corpus}` path segment of ADR-0055 (^[a-z0-9][a-z0-9-]{0,63}$). `url` is
+    the HTTPS clone URL, `ref` the branch or tag to follow, and `private`
+    marks repositories read through the GitHub App (ADR-0056 clause 5).
+  EOT
+  type = list(object({
+    key     = string
+    url     = string
+    ref     = optional(string, "main")
+    private = optional(bool, false)
+  }))
+  default = []
+
+  validation {
+    condition     = alltrue([for r in var.repos : can(regex("^[a-z0-9][a-z0-9-]{0,63}$", r.key))])
+    error_message = "Each repos[].key must match ^[a-z0-9][a-z0-9-]{0,63}$ (ADR-0055 clause 6)."
+  }
+
+  validation {
+    condition     = length(distinct([for r in var.repos : r.key])) == length(var.repos)
+    error_message = "repos[].key values must be unique."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.repos : startswith(r.url, "https://")])
+    error_message = "Each repos[].url must be an https:// clone URL."
+  }
+}
+
+variable "github_app_private_key_secret_name" {
+  description = "Name of the Key Vault secret that holds the GitHub App private key used by the sync job for private repositories. The secret value is set out of band; Terraform never sees it. Unused while every repo is public."
+  type        = string
+  default     = "github-app-private-key"
+}
+
+variable "entra_tenant_id" {
+  description = "Entra ID tenant that issues tokens accepted in public mode (validate-azure-ad-token). Required when public_access = true."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.public_access || var.entra_tenant_id != null
+    error_message = "entra_tenant_id is required when public_access = true."
+  }
+}
+
+variable "entra_audience" {
+  description = "Audience (application ID URI or client ID) required on tokens in public mode. Required when public_access = true."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.public_access || var.entra_audience != null
+    error_message = "entra_audience is required when public_access = true."
+  }
+}
+
+variable "rate_limit_calls" {
+  description = "Calls allowed per token subject per renewal period in public mode."
+  type        = number
+  default     = 120
+}
+
+variable "rate_limit_period_seconds" {
+  description = "Renewal period, in seconds, for rate-limit-by-key in public mode."
+  type        = number
+  default     = 60
+}
+
+variable "enable_waf" {
+  description = "Public mode only: put Azure Front Door Premium with a WAF policy in front of APIM over Private Link. Off by default; it is the largest optional cost line."
+  type        = bool
+  default     = false
+}
+
+variable "address_space" {
+  description = "VNet address space. The module carves four subnets from it."
+  type        = string
+  default     = "10.60.0.0/16"
+}
+
+variable "tags" {
+  description = "Tags applied to every resource that accepts them."
+  type        = map(string)
+  default     = {}
+}
