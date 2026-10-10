@@ -1,0 +1,67 @@
+<!--
+  HMAC verification of a GitHub-style X-Hub-Signature-256 header in APIM
+  policy (ADR-0056 clause 9, action item 5).
+
+  GitHub sends "sha256=" + lowercase hex HMAC-SHA256 of the raw request body,
+  keyed with the webhook secret. This policy recomputes it over the raw bytes
+  (Body.As<byte[]>, not a decoded string, so a non-ASCII body is hashed
+  exactly as sent), compares in constant time, and answers 200 "verified" or
+  401. Nothing is forwarded: there is no backend.
+
+  The secret is the named value github-webhook-secret (secret = true). APIM
+  substitutes {{github-webhook-secret}} into the expression before it runs;
+  the measurement's secret is hex, so it is safe inside a string literal.
+
+  If APIM rejects this document when Terraform saves it (for example, a type
+  not permitted in policy expressions), that rejection IS the measurement
+  result: the webhook cannot be verified in policy and clause 9 is dropped.
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="signatureValid" value="@{
+      string header = context.Request.Headers.GetValueOrDefault(&quot;X-Hub-Signature-256&quot;, &quot;&quot;);
+      if (!header.StartsWith(&quot;sha256=&quot;)) { return false; }
+      byte[] body = context.Request.Body.As&lt;byte[]&gt;(preserveContent: true) ?? new byte[0];
+      byte[] key = System.Text.Encoding.UTF8.GetBytes(&quot;{{github-webhook-secret}}&quot;);
+      string expected;
+      using (var hmac = new System.Security.Cryptography.HMACSHA256(key))
+      {
+        expected = &quot;sha256=&quot; + BitConverter.ToString(hmac.ComputeHash(body)).Replace(&quot;-&quot;, &quot;&quot;).ToLowerInvariant();
+      }
+      if (expected.Length != header.Length) { return false; }
+      int diff = 0;
+      for (int i = 0; i &lt; expected.Length; i++) { diff |= expected[i] ^ header[i]; }
+      return diff == 0;
+    }" />
+    <choose>
+      <when condition="@((bool)context.Variables[&quot;signatureValid&quot;])">
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>text/plain</value>
+          </set-header>
+          <set-body>verified</set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>text/plain</value>
+          </set-header>
+          <set-body>signature rejected</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

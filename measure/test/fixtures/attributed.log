@@ -1,0 +1,23 @@
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # azurerm_api_management_api_policy.webhook will be created
+  + resource "azurerm_api_management_api_policy" "webhook" {
+      + api_name            = "webhook"
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+azurerm_api_management_api_policy.webhook: Creating...
+
+Error: creating/updating Api Policy (Subscription: "00000000-0000-0000-0000-000000000000"
+Resource Group Name: "rg"
+Service Name: "amx-hmac-abc123"
+Api: "webhook"): unexpected status 400 (400 Bad Request) with error: ValidationError: One or more fields contain incorrect values:
+
+  with azurerm_api_management_api_policy.webhook,
+  on main.tf line 95, in resource "azurerm_api_management_api_policy" "webhook":
+  95: resource "azurerm_api_management_api_policy" "webhook" {
+

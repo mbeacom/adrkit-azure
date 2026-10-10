@@ -1,0 +1,24 @@
+Terraform will perform the following actions:
+
+  # azurerm_api_management.this will be created
+  + resource "azurerm_api_management" "this" {
+    }
+
+  # azurerm_api_management_api_policy.webhook will be created
+  + resource "azurerm_api_management_api_policy" "webhook" {
+    }
+
+  # azapi_resource.mcp_tool will be created
+  # azapi_update_resource.disable_public_access[0] will be created
+
+Plan: 4 to add, 0 to change, 0 to destroy.
+azurerm_api_management.this: Creating...
+
+Error: creating Service (Subscription: "00000000-0000-0000-0000-000000000000"
+Resource Group Name: "rg"
+Service Name: "amx-hmac-abc123"): performing CreateOrUpdate: unexpected status 409 (409 Conflict) with error: QuotaExceeded: Subscription quota for StandardV2 in region eastus2 has been exceeded.
+
+  with azurerm_api_management.this,
+  on main.tf line 36, in resource "azurerm_api_management" "this":
+  36: resource "azurerm_api_management" "this" {
+

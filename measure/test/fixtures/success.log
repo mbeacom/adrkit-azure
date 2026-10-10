@@ -1,0 +1,10 @@
+  # azurerm_api_management_api_policy.webhook will be created
+  # azapi_resource.mcp_tool will be created
+  # azapi_update_resource.disable_public_access[0] will be created
+Plan: 3 to add, 0 to change, 0 to destroy.
+azurerm_api_management_api_policy.webhook: Creating...
+azurerm_api_management_api_policy.webhook: Creation complete after 3s [id=/subscriptions/x/policies/policy]
+azapi_resource.mcp_tool: Creation complete after 2s
+azapi_update_resource.disable_public_access[0]: Creation complete after 9m12s
+
+Apply complete! Resources: 3 added, 0 changed, 0 destroyed.

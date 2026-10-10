@@ -18,9 +18,24 @@ env:
 
 jobs:
   terraform:
-    name: fmt, init, validate
+    name: fmt, init, validate (${{ matrix.root }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The deployment root and every rung-1 measurement root. Each has its
+        # own committed lock file.
+        root:
+          - .
+          - measure/public-network-access
+          - measure/outbound-integration
+          - measure/azure-files-swap
+          - measure/mcp-2026
+          - measure/hmac-policy
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -33,7 +48,11 @@ jobs:
           terraform_version: 1.13.3
           terraform_wrapper: false
 
+      # Recursive from the repository root, so it covers measure/ too; one
+      # matrix leg is enough.
       - name: terraform fmt -check
+        if: matrix.root == '.'
+        working-directory: .
         run: terraform fmt -check -recursive -diff
 
       # No backend, no credentials: init downloads providers and registry
@@ -43,3 +62,24 @@ jobs:
 
       - name: terraform validate
         run: terraform validate
+
+  scripts:
+    name: shellcheck and lib tests (measure/)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # shellcheck is preinstalled on GitHub's Ubuntu runners. The scripts
+      # create billed resources and are never run in CI; this checks them only.
+      - name: shellcheck
+        run: shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh measure/test/lib_test.sh
+
+      # Unit tests for how an apply failure is attributed to a resource
+      # (which decides FAIL versus ERROR). Fixtures only; no Azure, no
+      # Terraform.
+      - name: lib tests
+        run: bash measure/test/lib_test.sh

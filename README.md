@@ -26,7 +26,9 @@ which also serves the portal of
   schemas only. Under adrkit's evidence ladder
   ([ADR-0014](https://github.com/mbeacom/adrkit/blob/main/docs/adr/0014-stage-phase-landing-evidence-across-a-three-rung-validation-ladder.md))
   this is **rung 0**: no unit, reference, or external evidence.
-- ADR-0056 is **proposed**, not ratified.
+- ADR-0056 is **proposed**, not ratified. The rung-1 measurements it needs
+  first are scripted in [`measure/`](./measure/README.md) and have not been
+  run; results go in [`measure/RESULTS.md`](./measure/RESULTS.md).
 
 The `TODO(...)` comments in the code list every placeholder; the full list is
 at the end of this file.
@@ -328,7 +330,8 @@ Verified against Microsoft Learn or the Terraform Registry on 2026-10-10:
   0.9.0) also exists; it is not used here because the `publicNetworkAccess`
   step and outbound integration need direct control.
 
-Unverified (nothing has been applied):
+Unverified (nothing has been applied). The first six items are what
+[`measure/`](./measure/README.md) measures:
 
 - The ARM `publicNetworkAccess` update on Standard v2 (stated by the
   maintainer; ADR-0056 action item 2).
@@ -368,7 +371,7 @@ Unverified (nothing has been applied):
 | `TODO(portal-path)` | `modules/apim` | Portal is served under `/adrkit/`; confirm relative asset paths and add a wildcard operation for assets |
 | `TODO(webhook)` | `modules/apim` | Public-mode webhook not built, pending HMAC measurement |
 | `TODO(egress)` | `modules/network` | Outbound restrictions for the APIM integration subnet and the environment |
-| `TODO(rung-1)` | `modules/storage` | Measure the two-move swap on Azure Files |
+| `TODO(rung-1)` | `modules/storage` | Measure the two-move swap on Azure Files (scripted in `measure/azure-files-swap`, not yet run) |
 | `TODO(frontdoor-approval)` | `modules/frontdoor` | Approve the Private Link connection on APIM |
 | `TODO(frontdoor-lockdown)` | `modules/frontdoor` | Restrict APIM to Front Door traffic when Front Door is in front |
 | `TODO(frontdoor-probe)` | `modules/frontdoor` | Confirm the health probe path |

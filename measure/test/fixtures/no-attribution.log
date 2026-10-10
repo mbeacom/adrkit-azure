@@ -1,0 +1,14 @@
+Terraform will perform the following actions:
+
+  # azurerm_api_management_api_policy.webhook will be created
+  # azapi_resource.mcp_tool will be created
+  # azapi_update_resource.disable_public_access[0] will be created
+
+Plan: 3 to add, 0 to change, 0 to destroy.
+
+Error: building account: could not acquire access token to parse claims: running Azure CLI: exit status 1: ERROR: AADSTS700082: The refresh token has expired due to inactivity.
+
+  with provider["registry.terraform.io/hashicorp/azurerm"],
+  on providers.tf line 3, in provider "azurerm":
+   3: provider "azurerm" {
+

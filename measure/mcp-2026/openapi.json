@@ -1,0 +1,26 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "adrkit measurement stub",
+    "version": "0.0.0",
+    "description": "One GET operation, answered by an APIM policy. No backend."
+  },
+  "paths": {
+    "/hello": {
+      "get": {
+        "operationId": "getHello",
+        "summary": "Return a fixed JSON object.",
+        "responses": {
+          "200": {
+            "description": "A fixed JSON object.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

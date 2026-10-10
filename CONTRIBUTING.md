@@ -22,7 +22,8 @@ GitHub's web editor does not add a sign-off.
 
 ## Before opening a pull request
 
-CI runs exactly these, with no cloud credentials:
+CI runs exactly these, with no cloud credentials, in the repository root and
+in each `measure/<root>` directory (fmt once, recursively):
 
 ```bash
 terraform fmt -check -recursive
@@ -30,8 +31,13 @@ terraform init -backend=false
 terraform validate
 ```
 
-If you change a provider or module version, refresh the lock file for every
-platform CI and contributors use, or CI's `-lockfile=readonly` init fails:
+It also runs `shellcheck -x` on the `measure/` scripts. Never run
+`measure/run.sh` in CI: it creates billed resources (see
+[`measure/README.md`](./measure/README.md)).
+
+If you change a provider or module version, refresh the lock file (the root's
+and each `measure/<root>`'s) for every platform CI and contributors use, or
+CI's `-lockfile=readonly` init fails:
 
 ```bash
 terraform providers lock \
