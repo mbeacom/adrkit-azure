@@ -96,11 +96,47 @@ variable "entra_audience" {
 variable "rate_limit_calls" {
   description = "rate-limit-by-key calls per period (public mode)."
   type        = number
+
+  validation {
+    condition     = var.rate_limit_calls >= 1 && floor(var.rate_limit_calls) == var.rate_limit_calls
+    error_message = "rate_limit_calls must be a positive integer (APIM rate-limit-by-key calls)."
+  }
 }
 
 variable "rate_limit_period_seconds" {
-  description = "rate-limit-by-key renewal period (public mode)."
+  description = "rate-limit-by-key renewal period, an integer from 1 to 300 seconds (public-mode APIs and the private-mode portal)."
   type        = number
+
+  validation {
+    condition     = var.rate_limit_period_seconds >= 1 && var.rate_limit_period_seconds <= 300 && floor(var.rate_limit_period_seconds) == var.rate_limit_period_seconds
+    error_message = "rate_limit_period_seconds must be an integer from 1 to 300 (APIM rate-limit-by-key renewal-period)."
+  }
+}
+
+variable "enable_portal" {
+  description = "Create the private-mode portal API. Must be false when public_access = true."
+  type        = bool
+  default     = true
+
+  # A false -> true flip with the keyless portal on would destroy the portal
+  # and open the gateway in one apply, in no enforced order (see README).
+  # Refusing the combination forces two applies: enable_portal = false while
+  # still private (portal destroyed), then public_access = true.
+  validation {
+    condition     = !(var.public_access && var.enable_portal)
+    error_message = "enable_portal must be false when public_access = true. To go public, first apply enable_portal = false with public_access = false (the keyless portal is destroyed while the gateway is still private), then apply public_access = true."
+  }
+}
+
+variable "portal_rate_limit_calls" {
+  description = "Portal requests allowed per client IP per renewal period (private mode)."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.portal_rate_limit_calls >= 1 && floor(var.portal_rate_limit_calls) == var.portal_rate_limit_calls
+    error_message = "portal_rate_limit_calls must be a positive integer (APIM rate-limit-by-key calls)."
+  }
 }
 
 variable "tags" {

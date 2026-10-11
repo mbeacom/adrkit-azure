@@ -18,6 +18,11 @@ output "mcp_endpoint_path" {
   value       = module.apim.mcp_path
 }
 
+output "portal_url" {
+  description = "Private mode: URL of the decision portal (no subscription key; reachable from the private network). Null in public mode or when enable_portal = false."
+  value       = module.apim.portal_path == null ? null : "${module.apim.gateway_url}/${module.apim.portal_path}/"
+}
+
 output "server_internal_fqdn" {
   description = "Internal FQDN of the adrkit server app. Reachable only inside the VNet; APIM is the only intended caller."
   value       = module.container_apps.server_fqdn

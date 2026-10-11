@@ -253,10 +253,9 @@ seconds those commands run. They protect throwaway resources only.
 - **Clause 7's API ordering and the public-mode first-apply window.** Both need
   the full `modules/apim` with APIs and policies, and a way to observe the
   window from outside, which is not a single scripted check.
-- **ADR-0055's real reload.** The server is merged
-  ([adrkit#314](https://github.com/mbeacom/adrkit/pull/314)) but not yet
-  released, and this harness does not run it. Measurement 3 models clause 5's
-  rule in shell.
+- **ADR-0055's real reload.** The harness does not run the released server
+  (adrkit v0.20.0 contains it); it measures APIM and Azure behaviours only.
+  Measurement 3 models clause 5's rule in shell.
 - **The webhook's ARM `jobs/start` call** from APIM's managed identity.
   Measurement 5 covers only the HMAC check that gates it.
 - **Assumptions only a real run can check.** If one is wrong the script

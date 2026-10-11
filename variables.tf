@@ -193,15 +193,59 @@ variable "entra_audience" {
 }
 
 variable "rate_limit_calls" {
-  description = "Calls allowed per token subject per renewal period in public mode."
+  description = "Calls allowed per token subject per renewal period in public mode. A positive integer."
   type        = number
   default     = 120
+
+  validation {
+    condition     = var.rate_limit_calls >= 1 && floor(var.rate_limit_calls) == var.rate_limit_calls
+    error_message = "rate_limit_calls must be a positive integer (APIM rate-limit-by-key calls)."
+  }
 }
 
 variable "rate_limit_period_seconds" {
-  description = "Renewal period, in seconds, for rate-limit-by-key in public mode."
+  description = "Renewal period, in seconds, for rate-limit-by-key: the public-mode APIs and the private-mode portal. An integer from 1 to 300."
   type        = number
   default     = 60
+
+  validation {
+    condition     = var.rate_limit_period_seconds >= 1 && var.rate_limit_period_seconds <= 300 && floor(var.rate_limit_period_seconds) == var.rate_limit_period_seconds
+    error_message = "rate_limit_period_seconds must be an integer from 1 to 300 (APIM rate-limit-by-key renewal-period)."
+  }
+}
+
+variable "enable_portal" {
+  description = <<-EOT
+    Private mode only: publish the decision portal at /adrkit-portal/ as its own
+    APIM API with no subscription key (a browser's relative subrequests carry
+    none), so anyone who can reach the private endpoint can read it. Never
+    created in public mode (ADR-0056 clause 8): public_access = true requires
+    enable_portal = false, and validation refuses the combination, so going
+    public takes two applies (enable_portal = false first, while still
+    private; then public_access = true). Set false also to keep every route
+    key-protected in private mode.
+  EOT
+  type        = bool
+  default     = true
+
+  # A false -> true flip with the keyless portal on would destroy the portal
+  # and open the gateway in one apply, in no enforced order (see README).
+  # Refusing the combination forces two applies: enable_portal = false while
+  # still private (portal destroyed), then public_access = true.
+  validation {
+    condition     = !(var.public_access && var.enable_portal)
+    error_message = "enable_portal must be false when public_access = true. To go public, first apply enable_portal = false with public_access = false (the keyless portal is destroyed while the gateway is still private), then apply public_access = true."
+  }
+}
+
+variable "portal_rate_limit_calls" {
+  description = "Private-mode portal: requests allowed per client IP per renewal period. One page load is about eight requests."
+  type        = number
+  default     = 300
+  validation {
+    condition     = var.portal_rate_limit_calls >= 1 && floor(var.portal_rate_limit_calls) == var.portal_rate_limit_calls
+    error_message = "portal_rate_limit_calls must be a positive integer (APIM rate-limit-by-key calls)."
+  }
 }
 
 variable "enable_waf" {

@@ -120,6 +120,8 @@ module "apim" {
   entra_audience            = var.entra_audience
   rate_limit_calls          = var.rate_limit_calls
   rate_limit_period_seconds = var.rate_limit_period_seconds
+  enable_portal             = var.enable_portal
+  portal_rate_limit_calls   = var.portal_rate_limit_calls
 
   tags = local.tags
 }

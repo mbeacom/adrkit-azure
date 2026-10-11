@@ -31,7 +31,7 @@ here as working, deployed, or tested against Azure.
 | `modules/identity_secrets` | Sync job identity, Key Vault (private), role assignment |
 | `modules/storage` | Storage account and `corpora` Files share (private) |
 | `modules/container_apps` | Internal environment (AVM), server app, sync job (AVM) |
-| `modules/apim` | APIM, outbound integration, private endpoint, `publicNetworkAccess` step, REST and MCP APIs, policies |
+| `modules/apim` | APIM, outbound integration, private endpoint, `publicNetworkAccess` step, REST and MCP APIs, the private-mode keyless portal API, policies |
 | `modules/apim/policies/*.xml.tftpl` | API policies, rendered with `templatefile()` |
 | `modules/apim/openapi/adrkit-server.openapi.json` | The server's own `/openapi.json`, vendored from adrkit (source commit and regeneration in that directory's README) |
 | `modules/apim/openapi/mcp-tools.json` | operationId to description of the MCP tools; read by `modules/apim` |
@@ -132,8 +132,18 @@ terraform providers lock \
   is `<ADRKIT_SERVER_ROOT>/<key>` with records in `docs/adr` and the sidecar
   `.adrkit-corpus.json` at its top. Change one side and the sync job's layout
   (or the env var) must follow.
-- **`/healthz` is never imported into the REST API**, and in public mode
-  neither is the portal (`/`, `/portal/...`); see `local.openapi_paths`.
+- **`/healthz` and the portal (`/`, `/portal/...`) are never imported into
+  the REST API**; see `local.openapi_paths`.
+- **The portal is its own keyless API, `adrkit-portal`, in private mode
+  only** (`local.portal_enabled`). It must never exist when
+  `public_access = true`, never join the product, and never back an MCP
+  tool; its policy keeps the GET/HEAD guard and a per-IP rate limit. A
+  browser's relative subrequests carry no subscription key, which is why it
+  cannot live in the REST API. Validation (root and module) refuses
+  `public_access = true` with `enable_portal = true`, so going public takes
+  two applies and the portal is destroyed while the gateway is still
+  private. Do not relax that validation or give `enable_portal` a
+  mode-dependent default.
 - **`measure/public-network-access` mirrors `modules/apim` steps 1 to 4** (same
   resource types, API version, bodies, `ignore_changes`) rather than calling
   the module. If you change those steps in one place, change the other.
