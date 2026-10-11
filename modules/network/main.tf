@@ -67,6 +67,7 @@ resource "azurerm_subnet" "apim" {
 }
 
 resource "azurerm_subnet" "pe" {
+  #checkov:skip=CKV2_AZURE_31:No NSG yet on the private endpoint subnet; with private_endpoint_network_policies Disabled it would not apply to the endpoints. TODO(pe-nsg).
   name                              = "snet-private-endpoints"
   resource_group_name               = var.resource_group_name
   virtual_network_name              = azurerm_virtual_network.this.name

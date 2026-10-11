@@ -22,8 +22,9 @@ which also serves the portal of
 - **There is no sync image.** The corpus sync job runs a placeholder image
   (`sync_image`) that writes nothing.
 - **Nothing here has been applied.** CI runs `terraform fmt`, `init
-  -backend=false`, and `validate`, which check syntax, types, and provider
-  schemas only. Under adrkit's evidence ladder
+  -backend=false`, `validate`, TFLint, plan-only `terraform test` with mocked
+  providers, and static security scanners (see "Quality and security
+  checks"). None of them reaches Azure. Under adrkit's evidence ladder
   ([ADR-0014](https://github.com/mbeacom/adrkit/blob/main/docs/adr/0014-stage-phase-landing-evidence-across-a-three-rung-validation-ladder.md))
   this is **rung 0**: no unit, reference, or external evidence.
 - ADR-0056 is **proposed**, not ratified. The rung-1 measurements it needs
@@ -124,31 +125,67 @@ If you change the networking so that anything else can reach the app, remove
 - For private repositories: a GitHub App with `contents: read` on those
   repositories only. Put its private key in Key Vault yourself; Terraform never
   handles it (it would land in state).
-- A backend for state. None is configured here; add one in your fork.
+- A backend for state. The module configures none; add one in the root
+  configuration that calls it.
 - Something on the private network to apply from and to call the gateway from
   in private mode. Once `publicNetworkAccess` is `Disabled`, the gateway is
   reachable only through its private endpoint, and the Key Vault and storage
   data planes are private from the start.
 
-This repository configures its providers in the root (`providers.tf`), so it
-is meant to be forked or applied as a root configuration. Calling it as a
-child module works but rules out `count`, `for_each`, and `depends_on` on the
-module call.
+## Use as a module
+
+The repository root is a reusable module: it configures no providers, so the
+caller does, and the caller can use `count`, `for_each`, and `depends_on` on
+the module call. Two runnable callers live in [`examples/`](./examples):
+
+| Example | Shows |
+| --- | --- |
+| [`examples/basic`](./examples/basic) | The default, fully private deployment with one public repository |
+| [`examples/advanced`](./examples/advanced) | Public mode with Entra ID token validation, rate limiting, Front Door + WAF, private repositories, explicit global names, a non-default network, and tags |
+
+```hcl
+module "adrkit" {
+  source = "github.com/mbeacom/adrkit-azure?ref=vX.Y.Z" # see "Publishing to the Terraform Registry"
+
+  location             = "eastus2"
+  name_prefix          = "acme"
+  apim_publisher_email = "platform@example.com"
+  image_tag            = "v0.20.0" # required; v0.20.0 is the first release with the `server` selector
+
+  repos = [
+    { key = "platform", url = "https://github.com/acme/platform", ref = "main" },
+    { key = "payments", url = "https://github.com/acme/payments", private = true },
+  ]
+}
+```
+
+The caller's `azurerm` provider block **must** carry these settings; they are
+part of the module's contract, not preferences:
+
+```hcl
+provider "azurerm" {
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = false # the vault has purge protection
+    }
+    storage {
+      data_plane_available = false # the storage account is private from creation
+    }
+  }
+  storage_use_azuread = true
+}
+
+provider "azapi" {}
+```
+
+Without `data_plane_available = false`, azurerm makes storage data-plane calls
+that fail from outside the VNet. Inputs, outputs, and version requirements are
+listed under "Reference" at the end of this file.
 
 ## Usage
 
-```hcl
-# terraform.tfvars (example; not committed)
-location             = "eastus2"
-name_prefix          = "acme"
-apim_publisher_email = "platform@example.com"
-image_tag            = "v0.20.0" # required; v0.20.0 is the first release with the `server` selector
-
-repos = [
-  { key = "platform", url = "https://github.com/acme/platform", ref = "main" },
-  { key = "payments", url = "https://github.com/acme/payments", private = true },
-]
-```
+From a root configuration that calls the module (one of the examples, or your
+own) and has a state backend:
 
 ```bash
 terraform init
@@ -402,6 +439,82 @@ API**:
 ADR-0056 action item 6 requires these lines to be published before the first
 tagged release; actual figures are not measured.
 
+## Quality and security checks
+
+Every check runs in CI with no cloud credentials, and locally through
+`pre-commit run --all-files` (`.pre-commit-config.yaml` runs the same
+commands; CONTRIBUTING.md lists the versions).
+
+| Check | Config | What it covers |
+| --- | --- | --- |
+| `terraform fmt`, `init -backend=false -lockfile=readonly`, `validate` | `.github/workflows/ci.yml` | Syntax, types, provider schemas, in the module, both examples, and every `measure/` root |
+| TFLint 0.64.0, bundled `terraform` ruleset (preset `all`) + `azurerm` ruleset 0.32.0 | `.tflint.hcl` | Terraform style and correctness rules, and azurerm-specific checks; local modules are inspected through their callers |
+| `terraform test` | `tests/` | Plan-only tests with mocked providers: input validators, mode composition, the read-only surface of `modules/apim`, and the network boundary of `modules/network` ([tests/README.md](./tests/README.md)) |
+| terraform-docs 0.24.0 | `.terraform-docs.yml` | The generated "Reference" sections of this README, `modules/*/README.md`, and `examples/*/README.md` must be current |
+| Checkov 3.3.26 (official image, pinned by digest) | `.checkov.yaml` | Azure misconfiguration checks on the Terraform, and checks on the workflows |
+| Trivy 0.75.0 `config` | `trivy.yaml` | Azure misconfiguration checks (Trivy absorbed tfsec, which is no longer maintained separately) |
+| zizmor 1.30.1 | `.github/workflows/security.yml` | Security audit of the GitHub Actions workflows |
+| ShellCheck and `measure/test/lib_test.sh` | `.github/workflows/ci.yml` | The `measure/` scripts |
+
+Checkov, Trivy, and zizmor upload SARIF to code scanning (the repository's
+Security tab), and a weekly scheduled run surfaces new upstream checks. To
+make the checks blocking, mark the CI and Security jobs as required in the
+branch protection rules for `main`; that is a repository setting, not code.
+
+### Security scanning
+
+Findings are fixed where they are real. Where a finding does not apply, it is
+suppressed **inline**, next to the resource, with the reason in the comment
+(`#checkov:skip=<ID>:<reason>`, `# trivy:ignore:<ID>`,
+`# tflint-ignore: <rule>`); the config files suppress nothing. Current
+suppressions, in short:
+
+- APIM public access and VNet use (CKV_AZURE_174, CKV_AZURE_107): checkov
+  cannot see the azapi steps that set outbound integration and disable public
+  access; public access must be enabled at creation.
+- APIM backend "https" (CKV_AZURE_215): `protocol = "http"` is APIM's
+  protocol family; the URL is `https://`.
+- Registry module sources not pinned to a commit (CKV_TF_1): the AVM modules
+  are pinned to exact registry versions. A registry version is not
+  content-addressed and the lock file covers providers only, so this trusts
+  the registry and the module publisher (Microsoft).
+- Storage logging, replication, shared key, SAS policy, soft delete, and
+  customer-managed key (CKV_AZURE_33, CKV_AZURE_206, CKV2_AZURE_40/41/38/1,
+  AZU-0057, AZU-0058): the share is a private cache of git, mounted over SMB
+  with the account key, with no queues and no SAS. Infrastructure (double)
+  encryption **is** enabled.
+- Private endpoint subnet without an NSG (CKV2_AZURE_31): tracked as
+  `TODO(pe-nsg)`.
+- `prevent_destroy` on the storage account, share, and Key Vault (TFLint):
+  it cannot be made conditional, so it would stop callers from ever
+  destroying the module; the share is re-derivable and the vault has purge
+  protection.
+
+`measure/` is excluded from Checkov and Trivy: its roots are short-lived
+measurement rigs, destroyed by `run.sh`, and several create a public APIM on
+purpose. They are still formatted, validated, and linted.
+
+## Publishing to the Terraform Registry
+
+The module is laid out for the public registry (root module, `modules/`,
+`examples/`, a README per directory, no provider configuration). Publishing is
+not done yet and needs these steps by the maintainer:
+
+1. **Rename the repository** to the registry's `terraform-<PROVIDER>-<NAME>`
+   form, for example `mbeacom/terraform-azurerm-adrkit`. GitHub redirects the
+   old URL, but ADR-0056 and this repository's `source` tag
+   (`github.com/mbeacom/adrkit-azure` in `main.tf`) name the current one;
+   update both, the ADR first.
+2. **Tag a release** `vX.Y.Z` (semantic versioning; the registry ignores other
+   tags). ADR-0056 action item 6 requires the cost lines above before the
+   first tagged release.
+3. **Publish** at registry.terraform.io (sign in with GitHub, "Publish" >
+   "Module", select the repository). New tags are picked up through the
+   webhook the registry installs.
+
+Until then, callers use a Git source pinned to a tag or commit, as in "Use as
+a module".
+
 ## Verified vs unverified provider facts
 
 Verified against Microsoft Learn or the Terraform Registry on 2026-10-10:
@@ -419,6 +532,14 @@ Verified against Microsoft Learn or the Terraform Registry on 2026-10-10:
   Microsoft documents `azapi_resource`.
 - azurerm's `public_network_access_enabled` is documented as management plane
   only and required `true` at creation.
+- Storage infrastructure encryption can be set only when an account is
+  created, and is supported on general-purpose v2 accounts ("Enable
+  infrastructure encryption for double encryption of data").
+- Name rules used by the input validators: resource groups 1-90 characters,
+  no trailing period; APIM service 1-50, alphanumerics and hyphens, starting
+  with a letter; Key Vault secrets 1-127, alphanumerics and hyphens; Front
+  Door endpoints 1-50, alphanumerics and hyphens ("Naming rules and
+  restrictions for Azure resources").
 - Registry: azurerm 4.81.0 is the newest 4.x (5.x exists);
   azapi 2.13.0; `avm-res-app-managedenvironment` 0.5.1 requires azapi
   `~> 2.12` and azurerm `~> 4.0`; `avm-res-app-job` 0.2.2 requires azurerm
@@ -473,6 +594,7 @@ Unverified (nothing has been applied). The first six items are what
 | `TODO(github-app)` | `modules/container_apps` | GitHub App ID and installation ID are not wired |
 | `TODO(webhook)` | `modules/apim` | Public-mode webhook not built, pending HMAC measurement |
 | `TODO(egress)` | `modules/network` | Outbound restrictions for the APIM integration subnet and the environment |
+| `TODO(pe-nsg)` | `modules/network` | NSG on the private endpoint subnet, with `private_endpoint_network_policies` enabled so it applies (checkov CKV2_AZURE_31) |
 | `TODO(rung-1)` | `modules/storage` | Measure the two-move swap on Azure Files (scripted in `measure/azure-files-swap`, not yet run) |
 | `TODO(frontdoor-approval)` | `modules/frontdoor` | Approve the Private Link connection on APIM |
 | `TODO(frontdoor-lockdown)` | `modules/frontdoor` | Restrict APIM to Front Door traffic when Front Door is in front |
@@ -483,6 +605,91 @@ Also outstanding from ADR-0056: the drift CI job (run the pinned image's
 `server` selector over a fixture corpus and assert the commit and the 503 on a
 missing sidecar, observed failing first), Dependabot or Renovate for image-tag
 bumps, and a state backend.
+
+## Reference
+
+Generated by [terraform-docs](https://terraform-docs.io) from the code;
+CI fails if it is stale. Regenerate with
+`for d in . modules/*/ examples/*/; do terraform-docs "$d"; done`.
+
+<!-- BEGIN_TF_DOCS -->
+### Requirements
+
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.10.0, < 2.0.0 |
+| <a name="requirement_azapi"></a> [azapi](#requirement\_azapi) | ~> 2.13 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.73.0, < 5.0.0 |
+
+### Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.81.0 |
+
+### Modules
+
+| Name | Source | Version |
+| ---- | ------ | ------- |
+| <a name="module_apim"></a> [apim](#module\_apim) | ./modules/apim | n/a |
+| <a name="module_container_apps"></a> [container\_apps](#module\_container\_apps) | ./modules/container_apps | n/a |
+| <a name="module_frontdoor"></a> [frontdoor](#module\_frontdoor) | ./modules/frontdoor | n/a |
+| <a name="module_identity_secrets"></a> [identity\_secrets](#module\_identity\_secrets) | ./modules/identity_secrets | n/a |
+| <a name="module_network"></a> [network](#module\_network) | ./modules/network | n/a |
+| <a name="module_observability"></a> [observability](#module\_observability) | ./modules/observability | n/a |
+| <a name="module_storage"></a> [storage](#module\_storage) | ./modules/storage | n/a |
+
+### Resources
+
+| Name | Type |
+| ---- | ---- |
+| [azurerm_resource_group.this](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
+
+### Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_apim_publisher_email"></a> [apim\_publisher\_email](#input\_apim\_publisher\_email) | APIM publisher email (required by the service). | `string` | n/a | yes |
+| <a name="input_image_tag"></a> [image\_tag](#input\_image\_tag) | Immutable adrkit image tag, optionally with a digest, for example<br/>"v0.20.0" or "v0.20.0@sha256:<64 hex>". Required, with no default. The<br/>minimum is v0.20.0, the first adrkit release with the `server` selector<br/>(ADR-0055, mbeacom/adrkit#314); tags below it are refused. "latest" and<br/>the moving major tag ("v0") are refused (ADR-0056 clause 2). | `string` | n/a | yes |
+| <a name="input_location"></a> [location](#input\_location) | Azure region for every resource. APIM, the VNet, and its integration subnet must share it. | `string` | n/a | yes |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Short prefix for resource names. Lowercase letters and digits, 3 to 10 characters, so derived storage and Key Vault names stay within their limits. | `string` | n/a | yes |
+| <a name="input_repos"></a> [repos](#input\_repos) | Repositories whose docs/adr corpus is synced and served; at least one. `key`<br/>is the `{corpus}` path segment of ADR-0055 (^[a-z0-9][a-z0-9-]{0,63}$),<br/>the directory `<share>/<key>` the sync job writes, and the portal path<br/>`/portal/<key>/`. `url` is the HTTPS clone URL, `ref` the branch or tag to<br/>follow, and `private` marks repositories read through the GitHub App<br/>(ADR-0056 clause 5). With exactly one entry, the gateway's portal root<br/>redirects to that corpus's portal. | <pre>list(object({<br/>    key     = string<br/>    url     = string<br/>    ref     = optional(string, "main")<br/>    private = optional(bool, false)<br/>  }))</pre> | n/a | yes |
+| <a name="input_address_space"></a> [address\_space](#input\_address\_space) | VNet address space, an IPv4 CIDR of /16 or larger. The network module carves its subnets from it. | `string` | `"10.60.0.0/16"` | no |
+| <a name="input_apim_capacity"></a> [apim\_capacity](#input\_apim\_capacity) | APIM scale units. | `number` | `1` | no |
+| <a name="input_apim_name"></a> [apim\_name](#input\_apim\_name) | Optional explicit APIM name. APIM names are globally unique (<name>.azure-api.net); null derives "<name\_prefix>-adrkit-apim-<random 6>", stable across applies. | `string` | `null` | no |
+| <a name="input_apim_publisher_name"></a> [apim\_publisher\_name](#input\_apim\_publisher\_name) | APIM publisher name (required by the service). | `string` | `"adrkit"` | no |
+| <a name="input_apim_sku"></a> [apim\_sku](#input\_apim\_sku) | APIM v2 tier. StandardV2 is the baseline (ADR-0056 clause 6); PremiumV2 is allowed for teams already on it. Basic v2 is not offered because the private-endpoint tier list omits it. | `string` | `"StandardV2"` | no |
+| <a name="input_enable_portal"></a> [enable\_portal](#input\_enable\_portal) | Private mode only: publish the decision portal at /adrkit-portal/ as its own<br/>APIM API with no subscription key (a browser's relative subrequests carry<br/>none), so anyone who can reach the private endpoint can read it. Never<br/>created in public mode (ADR-0056 clause 8): public\_access = true requires<br/>enable\_portal = false, and validation refuses the combination. A private<br/>-> public flip in one apply destroys the portal before the gateway opens<br/>(dependency ordering in modules/apim). Set false also to keep every route<br/>key-protected in private mode. | `bool` | `true` | no |
+| <a name="input_enable_waf"></a> [enable\_waf](#input\_enable\_waf) | Public mode only: put Azure Front Door Premium with a WAF policy in front of APIM over Private Link. Off by default; it is the largest optional cost line. Requires public\_access = true. | `bool` | `false` | no |
+| <a name="input_entra_audience"></a> [entra\_audience](#input\_entra\_audience) | Audience (application ID URI or client ID) required on tokens in public mode. Required when public\_access = true. | `string` | `null` | no |
+| <a name="input_entra_tenant_id"></a> [entra\_tenant\_id](#input\_entra\_tenant\_id) | Entra ID tenant that issues tokens accepted in public mode (validate-azure-ad-token). Required when public\_access = true. | `string` | `null` | no |
+| <a name="input_frontdoor_endpoint_name"></a> [frontdoor\_endpoint\_name](#input\_frontdoor\_endpoint\_name) | Optional explicit Front Door endpoint name (globally unique). Null derives "<name\_prefix>-adrkit-<random 6>". Used only when public\_access && enable\_waf. | `string` | `null` | no |
+| <a name="input_github_app_private_key_secret_name"></a> [github\_app\_private\_key\_secret\_name](#input\_github\_app\_private\_key\_secret\_name) | Name of the Key Vault secret that holds the GitHub App private key used by the sync job for private repositories. The secret value is set out of band; Terraform never sees it. Unused while every repo is public. | `string` | `"github-app-private-key"` | no |
+| <a name="input_image_repository"></a> [image\_repository](#input\_image\_repository) | Container image repository for the adrkit server, without a tag or digest (those come from image\_tag). | `string` | `"ghcr.io/mbeacom/adrkit"` | no |
+| <a name="input_portal_rate_limit_calls"></a> [portal\_rate\_limit\_calls](#input\_portal\_rate\_limit\_calls) | Private-mode portal: requests allowed per client IP per renewal period. One page load is about eight requests. | `number` | `300` | no |
+| <a name="input_public_access"></a> [public\_access](#input\_public\_access) | false (default): fully private. APIM's gateway is reachable only through its<br/>inbound private endpoint, and its publicNetworkAccess is set to Disabled in a<br/>second step after that endpoint exists. true: the gateway stays public and<br/>every API adds validate-azure-ad-token and rate-limit-by-key. The Container<br/>Apps environment is internal in both modes, so flipping this never recreates<br/>the backend. | `bool` | `false` | no |
+| <a name="input_rate_limit_calls"></a> [rate\_limit\_calls](#input\_rate\_limit\_calls) | Calls allowed per token subject per renewal period in public mode. A positive integer. | `number` | `120` | no |
+| <a name="input_rate_limit_period_seconds"></a> [rate\_limit\_period\_seconds](#input\_rate\_limit\_period\_seconds) | Renewal period, in seconds, for rate-limit-by-key: the public-mode APIs and the private-mode portal. An integer from 1 to 300. | `number` | `60` | no |
+| <a name="input_resource_group_name"></a> [resource\_group\_name](#input\_resource\_group\_name) | Name of the resource group to create. Defaults to "<name\_prefix>-adrkit-rg". | `string` | `null` | no |
+| <a name="input_sync_cron"></a> [sync\_cron](#input\_sync\_cron) | Cron expression (UTC) for the corpus sync job's Schedule trigger. | `string` | `"*/15 * * * *"` | no |
+| <a name="input_sync_image"></a> [sync\_image](#input\_sync\_image) | TODO(sync-image): image for the corpus sync job. No sync image exists yet.<br/>The default is Microsoft's public Container Apps jobs quickstart sample,<br/>used only so the job resource can exist; it does not implement the sync<br/>and writes no corpus. Replace it once a sync image implementing ADR-0056<br/>clause 4 (shallow clone, write `<key>.next/`, write .adrkit-corpus.json<br/>last, two-move swap) is published. It must write, for each repos[].key,<br/>`<share>/<key>/docs/adr/...` and `<share>/<key>/.adrkit-corpus.json`: the<br/>layout the server reads through ADRKIT\_SERVER\_ROOT and<br/>ADRKIT\_SERVER\_CORPORA. | `string` | `"mcr.microsoft.com/k8se/quickstart-jobs:latest"` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to every resource that accepts them. | `map(string)` | `{}` | no |
+
+### Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_apim_gateway_url"></a> [apim\_gateway\_url](#output\_apim\_gateway\_url) | APIM default gateway URL. In private mode it resolves to the private endpoint only from networks linked to the privatelink.azure-api.net zone (ADR-0056 clause 10: no private custom domain in the first version). |
+| <a name="output_apim_name"></a> [apim\_name](#output\_apim\_name) | APIM service name (globally unique; random suffix unless apim\_name was set). |
+| <a name="output_apim_public_network_access"></a> [apim\_public\_network\_access](#output\_apim\_public\_network\_access) | The publicNetworkAccess value the second step sets: Disabled when public\_access = false. |
+| <a name="output_frontdoor_endpoint_hostname"></a> [frontdoor\_endpoint\_hostname](#output\_frontdoor\_endpoint\_hostname) | Front Door endpoint hostname when public\_access && enable\_waf, otherwise null. |
+| <a name="output_key_vault_uri"></a> [key\_vault\_uri](#output\_key\_vault\_uri) | Key Vault URI. Store the GitHub App private key here, out of band, under github\_app\_private\_key\_secret\_name. |
+| <a name="output_mcp_endpoint_path"></a> [mcp\_endpoint\_path](#output\_mcp\_endpoint\_path) | Path, under the gateway URL, of the REST-API-as-MCP server (tools only). |
+| <a name="output_portal_url"></a> [portal\_url](#output\_portal\_url) | Private mode: URL of the decision portal (no subscription key; reachable from the private network). Null in public mode or when enable\_portal = false. |
+| <a name="output_resource_group_name"></a> [resource\_group\_name](#output\_resource\_group\_name) | Resource group that holds the deployment. |
+| <a name="output_server_internal_fqdn"></a> [server\_internal\_fqdn](#output\_server\_internal\_fqdn) | Internal FQDN of the adrkit server app. Reachable only inside the VNet; APIM is the only intended caller. |
+| <a name="output_sync_job_id"></a> [sync\_job\_id](#output\_sync\_job\_id) | Resource ID of the corpus sync job (Schedule trigger; can also be started on demand via ARM jobs/start). |
+<!-- END_TF_DOCS -->
 
 ## License
 

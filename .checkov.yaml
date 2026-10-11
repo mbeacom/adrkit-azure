@@ -1,0 +1,20 @@
+# Checkov configuration. CI runs `checkov --config-file .checkov.yaml`.
+#
+# Findings are suppressed only inline (#checkov:skip=<ID>:<reason>) next to
+# the resource, never here, so every exception carries its reason.
+directory:
+  - .
+framework:
+  - terraform
+  - github_actions
+skip-path:
+  - .terraform
+  # Rung-1 measurement rigs (measure/README.md): short-lived, destroyed by
+  # run.sh, and several deliberately create a public APIM to measure the
+  # publicNetworkAccess step. They are linted and validated, not scanned.
+  - measure
+# Registry modules (the AVM modules) are scanned by their publishers; do not
+# download them here.
+download-external-modules: false
+compact: true
+quiet: true

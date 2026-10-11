@@ -36,6 +36,7 @@ locals {
 }
 
 module "environment" {
+  #checkov:skip=CKV_TF_1:Registry module pinned to an exact version; a git commit source would drop the registry source. See README "Security scanning".
   source  = "Azure/avm-res-app-managedenvironment/azurerm"
   version = "0.5.1"
 
@@ -235,6 +236,7 @@ resource "azurerm_container_app" "server" {
 }
 
 module "sync_job" {
+  #checkov:skip=CKV_TF_1:Registry module pinned to an exact version; a git commit source would drop the registry source. See README "Security scanning".
   source  = "Azure/avm-res-app-job/azurerm"
   version = "0.2.2"
 

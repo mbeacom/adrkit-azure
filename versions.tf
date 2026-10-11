@@ -12,14 +12,13 @@ terraform {
       source  = "hashicorp/azurerm"
       version = ">= 4.73.0, < 5.0.0"
     }
-    # avm-res-app-managedenvironment 0.5.1 needs ~> 2.12.
+    # avm-res-app-managedenvironment 0.5.1 needs ~> 2.12. Only child modules
+    # use azapi; it is declared here so callers see the constraint and so
+    # tests/*.tftest.hcl resolve `provider "azapi"` to Azure/azapi.
+    # tflint-ignore: terraform_unused_required_providers
     azapi = {
       source  = "Azure/azapi"
       version = "~> 2.13"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.5"
     }
   }
 }

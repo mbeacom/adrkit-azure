@@ -116,6 +116,8 @@ resource "random_string" "apim_suffix" {
 }
 
 resource "azurerm_api_management" "this" {
+  #checkov:skip=CKV_AZURE_107:v2 outbound VNet integration is set by azapi_update_resource.outbound (step 2), which checkov does not model.
+  #checkov:skip=CKV_AZURE_174:Public access must be enabled at creation; step 4 sets publicNetworkAccess to Disabled in private mode (ADR-0056 clause 7).
   name                = coalesce(var.apim_name, "${var.name_prefix}-adrkit-apim-${random_string.apim_suffix.result}")
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -294,6 +296,7 @@ resource "azurerm_api_management_diagnostic" "service" {
 }
 
 resource "azurerm_api_management_backend" "server" {
+  #checkov:skip=CKV_AZURE_215:protocol "http" is APIM's protocol family (http vs soap); url is the server's https:// FQDN from module.container_apps, unknown to static analysis.
   name                = local.policy_vars.backend_id
   api_management_name = azurerm_api_management.this.name
   resource_group_name = var.resource_group_name

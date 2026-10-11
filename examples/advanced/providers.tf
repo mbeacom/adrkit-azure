@@ -1,7 +1,7 @@
-# Configuration of the providers belongs to the root module only, so this
-# repository can also be consumed as a module by a caller that configures its
-# own providers. Authentication comes from the environment (Azure CLI, OIDC,
-# or a managed identity); nothing here names a credential.
+# The module configures no providers; its caller does. These settings are not
+# optional for this module: copy them into your own root configuration.
+# Authentication comes from the environment (Azure CLI, OIDC, or a managed
+# identity); nothing here names a credential.
 provider "azurerm" {
   features {
     key_vault {

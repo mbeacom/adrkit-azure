@@ -1,0 +1,38 @@
+# terraform-docs configuration. Generated reference sections live between the
+# BEGIN_TF_DOCS / END_TF_DOCS markers; edit the prose around them, not inside.
+#
+# Regenerate every README (CI fails if the output would change):
+#   for d in . modules/*/ examples/*/; do terraform-docs "$d"; done
+formatter: markdown table
+version: ">= 0.24.0, < 1.0.0"
+
+header-from: main.tf
+
+sections:
+  hide:
+    - header
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+sort:
+  enabled: true
+  by: required
+
+settings:
+  anchor: true
+  default: true
+  escape: true
+  hide-empty: true
+  html: true
+  indent: 3
+  lockfile: true
+  read-comments: true
+  required: true
+  sensitive: true
+  type: true

@@ -1,0 +1,23 @@
+# Trivy configuration (misconfiguration scanning). Trivy replaces tfsec, whose
+# checks it absorbed. CI runs `trivy config --config trivy.yaml .`.
+#
+# Findings are suppressed only inline (#trivy:ignore:<AVD ID>) above the
+# resource, with the reason in the comment beside it.
+severity:
+  - UNKNOWN
+  - LOW
+  - MEDIUM
+  - HIGH
+  - CRITICAL
+exit-code: 1
+misconfiguration:
+  terraform:
+    exclude-downloaded-modules: true
+scan:
+  skip-dirs:
+    - .terraform
+    - "**/.terraform"
+    # trivy-action's default cache directory sits inside the workspace.
+    - .cache
+    # Rung-1 measurement rigs; see the matching comment in .checkov.yaml.
+    - measure

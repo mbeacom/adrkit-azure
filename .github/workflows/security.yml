@@ -1,0 +1,121 @@
+name: Security
+
+# Static security scanning of the Terraform and of these workflows. Findings
+# fail the job and are uploaded to code scanning (Security tab). Nothing here
+# has cloud credentials or can reach a subscription.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so new upstream checks surface without a code change.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checkov:
+    name: checkov
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The official image, pinned by digest. bridgecrewio/checkov-action is
+      # not used: v12 runs checkov 2.0.930.
+      - name: checkov
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" --workdir /repo \
+            bridgecrew/checkov:3.3.26@sha256:8e63f217cb084f1c1a067326a9cf6e37d54bdc82e5822210d50ca4e2f647dd93 \
+            --config-file .checkov.yaml \
+            --output cli --output sarif --output-file-path console,checkov.sarif
+
+      - name: Upload SARIF
+        if: always() && hashFiles('checkov.sarif') != ''
+        # Best effort: a pull request from a fork never gets
+        # security-events: write. The scan step above is what blocks.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  trivy:
+    name: trivy config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Trivy replaces tfsec, whose checks it absorbed. Table output fails the
+      # job; the SARIF run below feeds code scanning.
+      - name: trivy config
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: v0.75.0
+          scan-type: config
+          scan-ref: .
+          trivy-config: trivy.yaml
+
+      - name: trivy config (SARIF)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: v0.75.0
+          scan-type: config
+          scan-ref: .
+          trivy-config: trivy.yaml
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "0"
+          skip-setup-trivy: true
+
+      - name: Upload SARIF
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        # Best effort: a pull request from a fork never gets
+        # security-events: write. The scan step above is what blocks.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  zizmor:
+    name: zizmor (workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Its built-in SARIF upload fails on fork pull requests (no
+      # security-events: write); findings still show in the log.
+      - name: zizmor
+        continue-on-error: ${{ github.event.pull_request.head.repo.fork == true }}
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482  # v0.6.4
+        with:
+          version: 1.30.1
