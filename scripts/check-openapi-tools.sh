@@ -59,13 +59,16 @@ fi
 # with whitespace or control characters cannot be dropped or split by the
 # loop below. Valid keys are what an OpenAPI operationId and an APIM tool
 # name can both be here: letters, digits, "_" and "-", starting alphanumeric.
-bad_keys="$(jq -r 'keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9_-]*$") | not) | @json' "$tools")"
+# The pattern is anchored with \A and \z, not ^ and $: in jq's (Oniguruma)
+# regexes "$" also matches before a final newline, so "getGraph\n" would pass.
+key_re='\A[A-Za-z0-9][A-Za-z0-9_-]*\z'
+bad_keys="$(jq -r --arg re "$key_re" 'keys[] | select(test($re) | not) | @json' "$tools")"
 if [ -n "$bad_keys" ]; then
-  echo "FAIL: invalid MCP tool keys in $(basename "$tools") (must match ^[A-Za-z0-9][A-Za-z0-9_-]*$):" >&2
+  echo "FAIL: invalid MCP tool keys in $(basename "$tools") (letters, digits, _ and -, starting alphanumeric):" >&2
   printf '  %s\n' "$bad_keys" >&2
   status=1
 fi
-tool_ids="$(jq -r 'keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9_-]*$"))' "$tools")"
+tool_ids="$(jq -r --arg re "$key_re" 'keys[] | select(test($re))' "$tools")"
 
 while IFS= read -r id; do
   [ -n "$id" ] || continue

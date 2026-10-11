@@ -139,11 +139,13 @@ terraform providers lock \
   `public_access = true`, never join the product, and never back an MCP
   tool; its policy keeps the GET/HEAD guard and a per-IP rate limit. A
   browser's relative subrequests carry no subscription key, which is why it
-  cannot live in the REST API. Validation (root and module) refuses
-  `public_access = true` with `enable_portal = true`, so going public takes
-  two applies and the portal is destroyed while the gateway is still
-  private. Do not relax that validation or give `enable_portal` a
-  mode-dependent default.
+  cannot live in the REST API. On a private -> public flip, the only thing
+  that keeps the gateway closed until the portal is gone is
+  `enable_public_access`'s `depends_on` on every portal resource (measured
+  with `terraform_data` stand-ins on 1.13.3; see the comment there). Keep
+  that list complete when you add a portal resource. The `enable_portal`
+  validation (root and module) is config-only defence in depth and does not
+  prevent a one-apply flip by itself.
 - **`measure/public-network-access` mirrors `modules/apim` steps 1 to 4** (same
   resource types, API version, bodies, `ignore_changes`) rather than calling
   the module. If you change those steps in one place, change the other.
