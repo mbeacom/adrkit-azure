@@ -32,3 +32,8 @@ output "principal_id" {
   description = "APIM system-assigned identity principal ID."
   value       = azurerm_api_management.this.identity[0].principal_id
 }
+
+output "portal_path" {
+  description = "Path of the private-mode decision portal API; null when it is not created (public mode, or enable_portal = false)."
+  value       = local.portal_enabled ? local.portal_api_path : null
+}

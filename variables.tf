@@ -199,9 +199,28 @@ variable "rate_limit_calls" {
 }
 
 variable "rate_limit_period_seconds" {
-  description = "Renewal period, in seconds, for rate-limit-by-key in public mode."
+  description = "Renewal period, in seconds, for rate-limit-by-key: the public-mode APIs and the private-mode portal."
   type        = number
   default     = 60
+}
+
+variable "enable_portal" {
+  description = <<-EOT
+    Private mode only: publish the decision portal at /adrkit-portal/ as its own
+    APIM API with no subscription key (a browser's relative subrequests carry
+    none), so anyone who can reach the private endpoint can read it. Never
+    created when public_access = true (ADR-0056 clause 8). Set false to keep
+    every route key-protected, and set it false in a separate apply before
+    flipping public_access from false to true (see README).
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "portal_rate_limit_calls" {
+  description = "Private-mode portal: requests allowed per client IP per renewal period. One page load is about eight requests."
+  type        = number
+  default     = 300
 }
 
 variable "enable_waf" {

@@ -1,0 +1,39 @@
+<!--
+  Policy for the adrkit decision portal API (ADR-0056 clause 8), which exists
+  in private mode only and requires no subscription key (see modules/apim,
+  the portal section, for why and for the trade-off). Rendered by
+  templatefile().
+  No policy here reads context.Response.Body: that breaks streaming.
+-->
+<policies>
+  <inbound>
+    <base />
+    <!-- Read-only invariant, as in the REST API: only GET and HEAD reach the
+         backend. The API carries catch-all "/*" operations for POST, PUT,
+         PATCH, DELETE, OPTIONS, and TRACE (portal_method_guard) so this
+         branch answers 405 instead of operation matching failing as 404. -->
+    <choose>
+      <when condition="@(context.Request.Method != &quot;GET&quot; &amp;&amp; context.Request.Method != &quot;HEAD&quot;)">
+        <return-response>
+          <set-status code="405" reason="Method Not Allowed" />
+          <set-header name="Allow" exists-action="override">
+            <value>GET, HEAD</value>
+          </set-header>
+        </return-response>
+      </when>
+    </choose>
+    <!-- No key and no token here, so the limit is per client address. One
+         page load is about eight requests. -->
+    <rate-limit-by-key calls="${rate_limit_calls}" renewal-period="${rate_limit_period}" counter-key="@(&quot;portal:&quot; + context.Request.IpAddress)" />
+    <set-backend-service backend-id="${backend_id}" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

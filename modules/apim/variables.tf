@@ -99,8 +99,20 @@ variable "rate_limit_calls" {
 }
 
 variable "rate_limit_period_seconds" {
-  description = "rate-limit-by-key renewal period (public mode)."
+  description = "rate-limit-by-key renewal period (public-mode APIs and the private-mode portal)."
   type        = number
+}
+
+variable "enable_portal" {
+  description = "Create the private-mode portal API. Ignored (no portal) when public_access = true."
+  type        = bool
+  default     = true
+}
+
+variable "portal_rate_limit_calls" {
+  description = "Portal requests allowed per client IP per renewal period (private mode)."
+  type        = number
+  default     = 300
 }
 
 variable "tags" {

@@ -56,21 +56,25 @@ locals {
   mcp_api_name  = "adrkit-mcp"
   mcp_api_path  = "adrkit-mcp"
 
+  # The decision portal's own API (private mode only; see the portal section
+  # below). A separate top-level path, so no API path nests in another.
+  portal_api_name = "adrkit-portal"
+  portal_api_path = "adrkit-portal"
+  portal_enabled  = !var.public_access && var.enable_portal
+
   # The server's own OpenAPI document (ADR-0055 clause 11), vendored from
   # adrkit; see openapi/README.md for its source commit and how to regenerate
   # it. What the REST API imports from it:
   #   - /healthz never: it is probed inside the environment and never
   #     published (ADR-0056 clause 6).
-  #   - /portal/... never as individual operations: the portal_assets wildcard
-  #     operation below forwards that whole subtree instead.
-  #   - "/" (getPortal: a relative redirect to the one corpus portal, or the
-  #     list of portals) in private mode only (ADR-0056 clause 8): a browser
-  #     carries no bearer token, so the public-mode token policy would make
-  #     it unreachable anyway.
+  #   - the portal ("/" and /portal/...) never: it is served by its own API,
+  #     adrkit-portal, in private mode only (see the portal section below).
+  #     In this subscription-required API a browser's relative subrequests,
+  #     which carry no key, would all be refused.
   openapi_source = jsondecode(file("${path.module}/openapi/adrkit-server.openapi.json"))
   openapi_paths = {
     for p, v in local.openapi_source.paths : p => v
-    if p != "/healthz" && !startswith(p, "/portal/") && !(var.public_access && p == "/")
+    if p != "/healthz" && p != "/" && !startswith(p, "/portal/")
   }
   openapi_document = jsonencode(merge(local.openapi_source, { paths = local.openapi_paths }))
 
@@ -91,6 +95,14 @@ locals {
     rate_limit_period = var.rate_limit_period_seconds
     backend_id        = "adrkit-server"
   }
+
+  portal_policy_vars = {
+    rate_limit_calls  = var.portal_rate_limit_calls
+    rate_limit_period = var.rate_limit_period_seconds
+    backend_id        = local.policy_vars.backend_id
+  }
+
+  read_only_guard_methods = toset(["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"])
 }
 
 # APIM names are global (they become <name>.azure-api.net). A stable random
@@ -297,10 +309,7 @@ resource "azurerm_api_management_api" "rest" {
   resource_group_name = var.resource_group_name
   revision            = "1"
   display_name        = "adrkit REST (read-only)"
-  # Everything, the portal included, is under this API's path. The server's
-  # portal links and its "/" redirect are relative (adrkit PR #314), so the
-  # /adrkit base path survives: /adrkit/ redirects to /adrkit/portal/<key>/
-  # when exactly one corpus is configured.
+  # The data API: /api/v1/... and /openapi.json. The portal has its own API.
   path                  = local.rest_api_path
   protocols             = ["https"]
   service_url           = var.backend_url
@@ -334,7 +343,7 @@ resource "azurerm_api_management_api_policy" "rest" {
 # 405 with "Allow: GET, HEAD". HEAD is not listed: it stays a read.
 # None of these is ever forwarded to the backend, and none is an MCP tool.
 resource "azurerm_api_management_api_operation" "method_guard" {
-  for_each = toset(["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"])
+  for_each = local.read_only_guard_methods
 
   operation_id        = "method-guard-${lower(each.key)}"
   api_name            = azurerm_api_management_api.rest.name
@@ -350,32 +359,122 @@ resource "azurerm_api_management_api_operation" "method_guard" {
   }
 }
 
-# The decision portal, private mode only (ADR-0056 clause 8; ADR-0054 served
-# by ADR-0055's server): one wildcard GET forwards the per-corpus subtree
-# /portal/{corpus}/ (the page, portal-data.json, and its asset files) to the
-# server, which owns the exact file list. The /portal/... operations in
-# the vendored document are filtered out of the import above so no exact
-# template overlaps this wildcard. A HEAD is not listed, as for the imported
-# operations.
+# ---------------------------------------------------------------------------
+# The decision portal: its own API, private mode only (ADR-0056 clause 8;
+# ADR-0054's portal, served by ADR-0055's server).
+#
+# Why a separate API with NO subscription key: a browser that opens the page
+# fetches app.css, page/app.mjs, page/icon.svg, vendor/*.mjs, and
+# portal-data.json by relative URL, and follows the server's relative "/"
+# redirect and list links. None of those requests carries an APIM
+# subscription key, so under the subscription-required REST API every one
+# would be refused (401).
+#
+# The trade-off: in private mode anyone who can reach the gateway's private
+# endpoint can read the portal without a key. The portal is the same
+# read-only data as the REST API, and the network boundary (private endpoint,
+# publicNetworkAccess Disabled) is what admits callers. That is why this API
+# exists only when public_access = false: in public mode it would be an
+# unauthenticated route from the internet, which clause 8 forbids. It is not
+# in the product (no subscription scope) and is never an MCP tool.
+#
+# Layout: /adrkit-portal/ is the server's "/" (a relative redirect to
+# portal/<key>/ when one corpus is configured, else a list of relative links),
+# and /adrkit-portal/portal/<key>/... is the server's /portal/<key>/..., so
+# every relative link resolves inside this API.
+#
 # Unverified: Microsoft Learn documents the "/*" wildcard template; a
 # wildcard after a literal segment ("/portal/*") is not shown there, and
-# neither is how APIM forwards the trailing slash of /portal/<key>/ (the
-# server's route matcher is segment-exact, so /portal/<key> without the slash
-# is a 404 from the backend).
-resource "azurerm_api_management_api_operation" "portal_assets" {
-  count = var.public_access ? 0 : 1
+# neither is how APIM forwards the trailing slash of /portal/<key>/ or of the
+# API root (the server's route matcher is segment-exact, so /portal/<key>
+# without the slash is a 404 from the backend).
+# ---------------------------------------------------------------------------
 
-  operation_id        = "portal-assets"
-  api_name            = azurerm_api_management_api.rest.name
+resource "azurerm_api_management_api" "portal" {
+  count = local.portal_enabled ? 1 : 0
+
+  name                  = local.portal_api_name
+  api_management_name   = azurerm_api_management.this.name
+  resource_group_name   = var.resource_group_name
+  revision              = "1"
+  display_name          = "adrkit decision portal (private mode, read-only)"
+  path                  = local.portal_api_path
+  protocols             = ["https"]
+  service_url           = var.backend_url
+  subscription_required = false
+
+  depends_on = [azapi_update_resource.disable_public_access, azurerm_private_endpoint.gateway]
+}
+
+# 405 guard, per-client-IP rate limit, backend. No validate-azure-ad-token:
+# a browser in private mode has no token flow.
+resource "azurerm_api_management_api_policy" "portal" {
+  count = local.portal_enabled ? 1 : 0
+
+  api_name            = azurerm_api_management_api.portal[0].name
+  api_management_name = azurerm_api_management.this.name
+  resource_group_name = var.resource_group_name
+  xml_content         = templatefile("${path.module}/policies/portal-api.xml.tftpl", local.portal_policy_vars)
+
+  depends_on = [
+    azurerm_api_management_backend.server,
+    azapi_update_resource.disable_public_access,
+  ]
+}
+
+# The server's "/" (getPortal).
+resource "azurerm_api_management_api_operation" "portal_root" {
+  count = local.portal_enabled ? 1 : 0
+
+  operation_id        = "portal-root"
+  api_name            = azurerm_api_management_api.portal[0].name
+  api_management_name = azurerm_api_management.this.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Decision portal root"
+  method              = "GET"
+  url_template        = "/"
+  description         = "Redirect to the only corpus portal, or the list of corpus portals."
+
+  response {
+    status_code = 200
+  }
+}
+
+# The per-corpus subtree /portal/{corpus}/ (the page, portal-data.json, and
+# its asset files); the server owns the exact file list.
+resource "azurerm_api_management_api_operation" "portal_files" {
+  count = local.portal_enabled ? 1 : 0
+
+  operation_id        = "portal-files"
+  api_name            = azurerm_api_management_api.portal[0].name
   api_management_name = azurerm_api_management.this.name
   resource_group_name = var.resource_group_name
   display_name        = "Decision portal (per corpus)"
   method              = "GET"
   url_template        = "/portal/*"
-  description         = "The decision portal of each corpus, at /portal/{corpus}/, forwarded to the server. Private mode only; never an MCP tool."
+  description         = "The decision portal of each corpus, at /portal/{corpus}/, forwarded to the server."
 
   response {
     status_code = 200
+  }
+}
+
+# Method guard for the portal API, as for the REST API: catch-all operations
+# so the policy runs and answers 405. Never forwarded.
+resource "azurerm_api_management_api_operation" "portal_method_guard" {
+  for_each = local.portal_enabled ? local.read_only_guard_methods : toset([])
+
+  operation_id        = "method-guard-${lower(each.key)}"
+  api_name            = azurerm_api_management_api.portal[0].name
+  api_management_name = azurerm_api_management.this.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Reject ${each.key} (read-only API)"
+  method              = each.key
+  url_template        = "/*"
+  description         = "Catch-all so the API policy can answer 405; never forwarded."
+
+  response {
+    status_code = 405
   }
 }
 
@@ -389,7 +488,6 @@ resource "azurerm_api_management_product_api" "rest" {
   depends_on = [
     azurerm_api_management_api_policy.rest,
     azurerm_api_management_api_operation.method_guard,
-    azurerm_api_management_api_operation.portal_assets,
   ]
 }
 

@@ -46,6 +46,7 @@ at the end of this file.
             | APIM Standard v2                                                            |
             |   REST API  /adrkit/...       GET only (policy returns 405 otherwise)        |
             |   MCP API   /adrkit-mcp       type "mcp", tools -> the GET operations         |
+            |   portal    /adrkit-portal/   private mode only, NO subscription key, GET only |
             |   public mode adds: validate-azure-ad-token, rate-limit-by-key               |
             |   publicNetworkAccess: Disabled (private) / Enabled (public)  [second step]  |
             +----------------------------------------------------------------------------+
@@ -99,7 +100,7 @@ If you change the networking so that anything else can reach the app, remove
 | `modules/identity_secrets` | User-assigned identity for the sync job, Key Vault (RBAC, private endpoint, public access off), Key Vault Secrets User role |
 | `modules/storage` | Storage account (public access off) with the `corpora` Files share and its private endpoint |
 | `modules/container_apps` | Environment via AVM `avm-res-app-managedenvironment` 0.5.1; server app (native `azurerm_container_app`); sync job via AVM `avm-res-app-job` 0.2.2; the environment's private DNS zone |
-| `modules/apim` | APIM v2 (globally unique name: random suffix or `apim_name`), outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API imported from the server's vendored OpenAPI document, with catch-all method-guard operations and a private-mode portal wildcard, MCP API and tools (azapi), policies from XML templates, Application Insights logger and service diagnostic (no body logging) |
+| `modules/apim` | APIM v2 (globally unique name: random suffix or `apim_name`), outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API imported from the server's vendored OpenAPI document, with catch-all method-guard operations; a separate private-mode portal API with no subscription key; MCP API and tools (azapi), policies from XML templates, Application Insights logger and service diagnostic (no body logging) |
 | `modules/frontdoor` | Optional Front Door Premium with WAF, Private Link origin to APIM (endpoint name: random suffix or `frontdoor_endpoint_name`); only when `public_access && enable_waf` |
 
 ## Prerequisites
@@ -193,7 +194,8 @@ with a missing or invalid sidecar answers `503`.
 
 `public_access` changes the gateway only. The Container Apps environment is
 internal in both modes, so flipping it never recreates the backend, and the
-routes and tools are identical.
+REST routes and MCP tools are identical. The one difference in what is
+published is the keyless portal API, which exists in private mode only.
 
 ### `public_access = false` (default): fully private
 
@@ -202,12 +204,15 @@ routes and tools are identical.
   combination as end-to-end network isolation.
 - After the private endpoint exists, `publicNetworkAccess` is set to
   `Disabled` (the two-step apply below).
-- The decision portal is published under the REST API's path: each corpus
-  at `/adrkit/portal/<key>/`, forwarded by one wildcard `GET /portal/*`
-  operation. `/adrkit/` redirects there when `repos` has exactly one entry
-  and lists the portals otherwise. The server's links and redirect are
-  relative, so the `/adrkit` base path survives.
-- Callers authenticate with an APIM subscription key on the `adrkit` product.
+- The REST and MCP APIs require an APIM subscription key on the `adrkit`
+  product.
+- The decision portal is its own API, `adrkit-portal`, with **no
+  subscription key** (output `portal_url`): each corpus at
+  `/adrkit-portal/portal/<key>/`, forwarded by one wildcard `GET /portal/*`
+  operation, and `/adrkit-portal/` redirecting there when `repos` has exactly
+  one entry (a list of portals otherwise). The server's links and redirect
+  are relative, so they stay inside that API. See "The private-mode portal
+  has no key" below.
 - The default gateway host name resolves to the private endpoint only from
   networks linked to the `privatelink.azure-api.net` zone. A private custom
   domain needs an Application Gateway in front and is out of scope (ADR-0056
@@ -226,10 +231,31 @@ Everything above, plus, on every API:
 - optionally (`enable_waf = true`) Azure Front Door Premium with a WAF policy,
   reaching APIM over Private Link. Off by default.
 
-The portal (`/` and `/portal/...`) is **left out** in public mode: a browser carries no bearer
-token, so the token policy would make it unreachable anyway. Serving it
-publicly needs an interactive sign-in in front, which is a later change
-(ADR-0056 clause 8).
+The portal API is **never created** in public mode: it has no key and no
+token check, so in public mode it would be an unauthenticated route from the
+internet. Serving it publicly needs an interactive sign-in in front, which is
+a later change (ADR-0056 clause 8).
+
+### The private-mode portal has no key
+
+A browser that opens the portal page fetches its stylesheet, modules, icon,
+and `portal-data.json` by relative URL and follows the server's relative
+redirect and links. None of those requests carries an APIM subscription key,
+so a portal inside the subscription-required REST API would answer `401` to
+all of them. The portal therefore has its own API with
+`subscription_required = false`, outside the `adrkit` product and never an
+MCP tool.
+
+**The trade-off:** in private mode, anyone who can reach the gateway's
+private endpoint can read every corpus through the portal without a key. The
+portal serves the same read-only data as the REST API; what admits callers is
+the network boundary (the private endpoint, `publicNetworkAccess` Disabled).
+That is the reason it exists in private mode only. Its policy keeps the
+`GET`/`HEAD` guard (with catch-all `405` operations, as the REST API) and adds
+`rate-limit-by-key` per client IP (`portal_rate_limit_calls` per
+`rate_limit_period_seconds`), with no token validation because a browser has
+no token flow here. If keyed access to every route matters more than the
+portal, set `enable_portal = false`.
 
 ## The two-step apply for `publicNetworkAccess`
 
@@ -275,6 +301,11 @@ plan does not revert step 4.
   policy. Every API requires a subscription key and joins the product only
   after its policy, so in that window it answers only to APIM's built-in
   all-access subscription key, an administrator credential. Unmeasured.
+- *Private to public flip with the portal on:* the same apply destroys the
+  keyless portal API and enables public access, and nothing orders the two,
+  so the gateway may open while the portal still exists. Avoid it with two
+  applies: first `enable_portal = false` (portal removed, still private),
+  then `public_access = true`.
 
 ADR-0056 clause 7 also asks for a global deny-all `ip-filter` from creation;
 the skeleton does not add one, because a global deny-all would also block
@@ -396,10 +427,12 @@ Unverified (nothing has been applied). The first six items are what
 - That APIM accepts the portal's `GET /portal/*` wildcard template
   (Microsoft Learn documents `/*`; a wildcard after a literal segment is not
   shown), and how it forwards the trailing slash of `/portal/<key>/` and of
-  the API root `/adrkit/` (the server's matcher is segment-exact, so
+  the portal API root `/adrkit-portal/` (the server's matcher is segment-exact, so
   `/portal/<key>` without the slash is a backend `404`). Also whether a
-  re-import of the OpenAPI document leaves the separately created operations
-  (portal wildcard, method guard) in place.
+  re-import of the OpenAPI document leaves the separately created
+  method-guard operations in place, and that `rate-limit-by-key` on
+  `context.Request.IpAddress` sees each caller's own address on the private
+  endpoint.
 - That the `/*` catch-all operations take precedence the way the method
   guard assumes, and that APIM resolves the true/false ordering exactly as
   described above (dependency order is Terraform's; the policy behaviour is
