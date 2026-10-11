@@ -203,6 +203,11 @@ resource "azapi_update_resource" "disable_public_access" {
 
 # Step 4, public mode: open the gateway only AFTER the public-mode policies,
 # the catch-all method guard, diagnostics, and product bindings exist.
+# The keyless portal API is not ordered here: var.enable_portal's validation
+# refuses public_access = true with enable_portal = true, so a private ->
+# public flip destroys the portal in an earlier apply. A precondition here
+# would add nothing: it sees configuration, where the portal's count is
+# already 0 in public mode, not the state that still holds it.
 resource "azapi_update_resource" "enable_public_access" {
   count = var.public_access ? 1 : 0
 

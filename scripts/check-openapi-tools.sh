@@ -50,18 +50,25 @@ if [ -n "$missing_id" ]; then
   printf '  %s\n' "$missing_id"
 fi
 
-tool_ids="$(jq -r 'keys[]' "$tools")"
-if [ -z "$tool_ids" ]; then
-  echo "FAIL: $tools names no tools" >&2
+if [ "$(jq 'type == "object" and length > 0' "$tools")" != "true" ]; then
+  echo "FAIL: $tools must be a non-empty JSON object of operationId to description" >&2
   exit 1
 fi
 
-for id in $tool_ids; do
-  if [ "$id" = "-" ]; then
-    echo "FAIL: '-' is not a valid MCP tool operationId" >&2
-    status=1
-    continue
-  fi
+# Keys are checked in jq, before any shell handling, so an empty key or one
+# with whitespace or control characters cannot be dropped or split by the
+# loop below. Valid keys are what an OpenAPI operationId and an APIM tool
+# name can both be here: letters, digits, "_" and "-", starting alphanumeric.
+bad_keys="$(jq -r 'keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9_-]*$") | not) | @json' "$tools")"
+if [ -n "$bad_keys" ]; then
+  echo "FAIL: invalid MCP tool keys in $(basename "$tools") (must match ^[A-Za-z0-9][A-Za-z0-9_-]*$):" >&2
+  printf '  %s\n' "$bad_keys" >&2
+  status=1
+fi
+tool_ids="$(jq -r 'keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9_-]*$"))' "$tools")"
+
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
   line="$(printf '%s\n' "$ops" | awk -F'\t' -v id="$id" '$1 == id')"
   if [ "$(printf '%s\n' "$line" | grep -c .)" -gt 1 ]; then
     echo "FAIL: MCP tool '$id': that operationId is used by more than one operation" >&2
@@ -82,7 +89,9 @@ for id in $tool_ids; do
       status=1
       ;;
   esac
-done
+done <<EOF_IDS
+$tool_ids
+EOF_IDS
 
 # Not a failure: a new data operation may be left out of the tools on purpose.
 printf '%s\n' "$ops" | awk -F'\t' 'NF && $1 != "-" && $2 == "get" && index($3, "/api/v1/") == 1 { print $1 }' |

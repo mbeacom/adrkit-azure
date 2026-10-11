@@ -231,6 +231,17 @@ Everything above, plus, on every API:
 - optionally (`enable_waf = true`) Azure Front Door Premium with a WAF policy,
   reaching APIM over Private Link. Off by default.
 
+A public-mode configuration must set `enable_portal = false` explicitly;
+validation refuses `public_access = true` with `enable_portal = true`:
+
+```hcl
+# terraform.tfvars, public mode (example; not committed)
+public_access   = true
+enable_portal   = false # required in public mode
+entra_tenant_id = "00000000-0000-0000-0000-000000000000"
+entra_audience  = "api://adrkit"
+```
+
 The portal API is **never created** in public mode: it has no key and no
 token check, so in public mode it would be an unauthenticated route from the
 internet. Serving it publicly needs an interactive sign-in in front, which is
@@ -301,11 +312,16 @@ plan does not revert step 4.
   policy. Every API requires a subscription key and joins the product only
   after its policy, so in that window it answers only to APIM's built-in
   all-access subscription key, an administrator credential. Unmeasured.
-- *Private to public flip with the portal on:* the same apply destroys the
-  keyless portal API and enables public access, and nothing orders the two,
-  so the gateway may open while the portal still exists. Avoid it with two
-  applies: first `enable_portal = false` (portal removed, still private),
-  then `public_access = true`.
+- *Private to public flip with the portal on:* one apply would destroy the
+  keyless portal API and enable public access with nothing ordering the two,
+  so the gateway could open while the portal still exists. Validation
+  therefore refuses `public_access = true` with `enable_portal = true` (at
+  the root and in `modules/apim`), which forces two applies: first
+  `enable_portal = false` with `public_access = false` (the portal is
+  destroyed while the gateway is still private), then `public_access =
+  true`. No `precondition` backs this up: a precondition sees configuration,
+  not state, and in configuration the portal's count is already 0 whenever
+  `public_access = true`, so it could never fail where the validation passed.
 
 ADR-0056 clause 7 also asks for a global deny-all `ip-filter` from creation;
 the skeleton does not add one, because a global deny-all would also block
