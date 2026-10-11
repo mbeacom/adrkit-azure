@@ -22,28 +22,56 @@ GitHub's web editor does not add a sign-off.
 
 ## Before opening a pull request
 
-CI runs exactly these, with no cloud credentials, in the repository root and
-in each `measure/<root>` directory (fmt once, recursively):
+Install the tools at the versions CI uses, then run the hooks:
+
+| Tool | Version |
+| --- | --- |
+| Terraform | 1.13.3 (floor 1.10) |
+| TFLint | 0.64.0 (plugins pinned in `.tflint.hcl`) |
+| terraform-docs | 0.24.0 |
+| Trivy | 0.75.0 |
+| Checkov | 3.3.26 |
+| ShellCheck | any recent |
+| pre-commit | any recent |
 
 ```bash
-terraform fmt -check -recursive
-terraform init -backend=false
+pre-commit install          # once
+pre-commit run --all-files  # fmt, tflint, terraform test, docs, trivy, checkov, shellcheck
+```
+
+CI also runs, with no cloud credentials, in the repository root, in
+`examples/basic` and `examples/advanced`, and in each `measure/<root>`
+directory:
+
+```bash
+terraform init -backend=false -lockfile=readonly
 terraform validate
 ```
 
-It also runs `shellcheck -x` on the `measure/` scripts. Never run
+[AGENTS.md](./AGENTS.md) has the exact command list. Never run
 `measure/run.sh` in CI: it creates billed resources (see
 [`measure/README.md`](./measure/README.md)).
 
-If you change a provider or module version, refresh the lock file (the root's
-and each `measure/<root>`'s) for every platform CI and contributors use, or
-CI's `-lockfile=readonly` init fails:
+If you change an input's validation, add a case to
+`tests/validation.tftest.hcl`. If you change a variable, output, or version
+constraint, regenerate the docs:
+
+```bash
+for d in . modules/*/ examples/*/; do terraform-docs "$d"; done
+```
+
+If you change a provider or module version, refresh the lock file (the
+root's, each `examples/<name>`'s, and each `measure/<root>`'s) for every
+platform CI and contributors use, or CI's `-lockfile=readonly` init fails:
 
 ```bash
 terraform providers lock \
   -platform=linux_amd64 -platform=linux_arm64 \
   -platform=darwin_arm64 -platform=darwin_amd64
 ```
+
+A security finding is fixed, or suppressed inline next to the resource with
+its reason (README, "Security scanning"); never in the scanner config files.
 
 ## Ground rules
 

@@ -1,0 +1,81 @@
+# pre-commit hooks. Install once with `pre-commit install`; run everything with
+# `pre-commit run --all-files`.
+#
+# The local hooks run the same commands CI uses for fmt, tflint, terraform
+# test, terraform-docs, trivy, checkov, shellcheck, and the OpenAPI tool
+# check. They need those tools on PATH; CONTRIBUTING.md lists the versions.
+# A clean run is NOT the whole of CI: per-root `init`/`validate` (examples/
+# and measure/), zizmor on the workflows, and Checkov's pinned 3.3.26 image
+# run in CI only.
+# Test fixtures are byte-exact captures of tool output; leave them alone.
+exclude: ^measure/test/fixtures/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive
+        language: system
+        pass_filenames: false
+        files: \.(tf|tfvars|tftest\.hcl)$
+
+      - id: tflint
+        name: tflint
+        entry: bash -c 'tflint --init >/dev/null && tflint --recursive --config "$PWD/.tflint.hcl" --format compact'
+        language: system
+        pass_filenames: false
+        files: (\.tf|\.tflint\.hcl)$
+
+      - id: terraform-test
+        name: terraform test
+        entry: bash -c 'terraform init -backend=false -lockfile=readonly >/dev/null && terraform test'
+        language: system
+        pass_filenames: false
+        files: (\.tf|\.tftest\.hcl|\.tfmock\.hcl|\.tftpl|\.json)$
+
+      - id: terraform-docs
+        name: terraform-docs
+        entry: bash -c 'for d in . modules/*/ examples/*/; do terraform-docs "$d" >/dev/null || exit 1; done'
+        language: system
+        pass_filenames: false
+        files: (\.tf|\.terraform-docs\.yml|README\.md)$
+
+      - id: trivy-config
+        name: trivy config
+        entry: trivy config --config trivy.yaml --quiet .
+        language: system
+        pass_filenames: false
+        files: \.tf$
+
+      - id: checkov
+        name: checkov
+        entry: checkov --config-file .checkov.yaml
+        language: system
+        pass_filenames: false
+        files: (\.tf|\.ya?ml)$
+
+      - id: shellcheck
+        name: shellcheck (measure/, scripts/)
+        entry: bash -c 'shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh measure/test/lib_test.sh scripts/check-openapi-tools.sh'
+        language: system
+        pass_filenames: false
+        files: ^(measure|scripts)/.*\.sh$
+
+      - id: openapi-tools
+        name: OpenAPI tool check
+        entry: bash scripts/check-openapi-tools.sh
+        language: system
+        pass_filenames: false
+        files: ^(modules/apim/openapi/|scripts/check-openapi-tools\.sh$)

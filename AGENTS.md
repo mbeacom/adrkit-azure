@@ -15,8 +15,10 @@ ADR-0055's server and ADR-0054's portal.
 **It is a skeleton at evidence rung 0.** Nothing has been applied. The server
 (`server` selector) first shipped in adrkit v0.20.0, the `image_tag` floor;
 the sync image does not exist yet.
-CI checks only syntax, types, and provider schemas. Do not describe anything
-here as working, deployed, or tested against Azure.
+CI checks syntax, types, provider schemas, lint rules, static security
+findings, and plan-only tests with mocked providers; none of it reaches
+Azure. Do not describe anything here as working, deployed, or tested against
+Azure.
 
 ## Layout
 
@@ -24,8 +26,14 @@ here as working, deployed, or tested against Azure.
 | --- | --- |
 | `main.tf` | Composition root: resource group, then `network`, `observability`, `identity_secrets`, `storage`, `container_apps`, `apim`, and `frontdoor` (only when `public_access && enable_waf`) |
 | `variables.tf`, `outputs.tf` | Root inputs (validated) and outputs |
-| `versions.tf`, `providers.tf` | Version constraints and the only provider configuration (root only) |
+| `versions.tf` | Version constraints. The module configures **no** providers; callers do (see `examples/*/providers.tf`) |
 | `.terraform.lock.hcl` | Committed lock file, multi-platform |
+| `examples/basic`, `examples/advanced` | Runnable callers (private mode; public mode with Front Door). Each is a root with its own `providers.tf` and lock file |
+| `tests/` | Plan-only `terraform test` suites and mocks; read `tests/README.md` before adding a run |
+| `modules/*/README.md`, `examples/*/README.md` | Prose plus a terraform-docs block between `BEGIN_TF_DOCS`/`END_TF_DOCS` |
+| `.tflint.hcl`, `.checkov.yaml`, `trivy.yaml`, `.terraform-docs.yml` | Linter, scanner, and docs configuration |
+| `.pre-commit-config.yaml` | Local hooks that run the same commands as CI |
+| `.github/workflows/ci.yml`, `security.yml` | CI (fmt, validate, tflint, test, docs, scripts) and security scans (Checkov, Trivy, zizmor) |
 | `modules/network` | VNet, three subnets (Container Apps, APIM integration, private endpoints), NSGs, Private DNS zones |
 | `modules/observability` | Log Analytics, Application Insights |
 | `modules/identity_secrets` | Sync job identity, Key Vault (private), role assignment |
@@ -47,13 +55,28 @@ CI ([.github/workflows/ci.yml](./.github/workflows/ci.yml)) runs, with no
 cloud credentials:
 
 ```bash
-# Once, from the repository root (covers measure/ too)
+# Once, from the repository root (covers examples/ and measure/ too)
 terraform fmt -check -recursive -diff
 
-# In . and in each of measure/public-network-access, measure/outbound-integration,
+# In ., examples/basic, examples/advanced, and each of
+# measure/public-network-access, measure/outbound-integration,
 # measure/azure-files-swap, measure/mcp-2026, measure/hmac-policy
 terraform init -backend=false -lockfile=readonly
 terraform validate
+
+# In . only: plan-only tests, mocked providers, no credentials
+terraform test
+
+# Lint (from the root)
+tflint --init
+tflint --recursive --config "$(pwd)/.tflint.hcl" --format compact
+
+# Generated docs must be current
+for d in . modules/*/ examples/*/; do terraform-docs --output-check "$d"; done
+
+# Security scanners (security.yml); CI runs Checkov 3.3.26 from its image
+checkov --config-file .checkov.yaml
+trivy config --config trivy.yaml .
 
 # Scripts
 shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh \
@@ -63,15 +86,19 @@ bash measure/test/lib_test.sh
 bash scripts/check-openapi-tools.sh
 ```
 
+`pre-commit run --all-files` runs all of the above except `init`/`validate`
+per root. A local Checkov of another version can flag a different set;
+CI's pinned image (3.3.26) is the reference.
+
 CI uses Terraform 1.13.3; the floor is 1.10 (an AVM module uses an ephemeral
 resource). `validate` sees variables as unknown, so it does not check azapi
 request bodies or `sku_name` values; say so rather than claiming they are
 checked.
 
-If you add a measurement root, add it to the CI matrix and give it its own
-lock file. If you change a provider or module version, refresh every lock
-file (root and each `measure/<root>`) for all four platforms, or
-`-lockfile=readonly` fails:
+If you add a measurement root or an example, add it to the CI matrix and give
+it its own lock file. If you change a provider or module version, refresh
+every lock file (root, each `examples/<name>`, and each `measure/<root>`) for
+all four platforms, or `-lockfile=readonly` fails:
 
 ```bash
 terraform providers lock \
@@ -98,7 +125,15 @@ terraform providers lock \
   you change that, remove `ADRKIT_SERVER_HOST`.
 - Never default or loosen `image_tag` to `latest` or a moving major tag; the
   validation regex enforces `vX.Y.Z[@sha256:<digest>]` (ADR-0056 clause 2).
-- Don't upgrade to azurerm 5.x: the AVM modules require `>= 4.73.0, < 5.0.0`.
+- Don't upgrade to azurerm 5.x here: the AVM modules require
+  `>= 4.73.0, < 5.0.0`. The 5.x move (replacing both AVM modules with native
+  resources) is planned as its own pull request.
+- Never add `provider` blocks to the root or to `modules/*`; they belong to
+  callers. Never add a `command = apply` run to `tests/`: `azapi` is a real
+  provider there (tests/README.md).
+- Never suppress a finding in `.tflint.hcl`, `.checkov.yaml`, or
+  `trivy.yaml`. Suppress inline, next to the resource, with the reason, and
+  add it to README "Security scanning".
 
 ## Invariants that are easy to break
 
@@ -151,6 +186,14 @@ terraform providers lock \
   the module. If you change those steps in one place, change the other.
 
 ## Conventions
+
+- **Validators come with tests.** A new or changed input validation gets an
+  `expect_failures` run in `tests/validation.tftest.hcl`; a new invariant gets
+  an assertion, and you should check that it fails when the invariant is
+  broken.
+- **Examples carry the provider contract.** The `azurerm` `features` block in
+  `examples/*/providers.tf` (and README "Use as a module") is required by the
+  module; keep all three copies identical.
 
 - **Comments carry evidence.** When code relies on Azure behaviour, state in
   the comment whether it is verified (with source and date, for example

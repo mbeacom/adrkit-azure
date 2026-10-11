@@ -24,10 +24,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The deployment root and every rung-1 measurement root. Each has its
-        # own committed lock file.
+        # The module, its examples, and every rung-1 measurement root. Each
+        # has its own committed lock file.
         root:
           - .
+          - examples/basic
+          - examples/advanced
           - measure/public-network-access
           - measure/outbound-integration
           - measure/azure-files-swap
@@ -62,6 +64,71 @@ jobs:
 
       - name: terraform validate
         run: terraform validate
+
+      # Plan-only tests with mocked providers; no credentials, nothing created
+      # (tests/README.md).
+      - name: terraform test
+        if: matrix.root == '.'
+        run: terraform test
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up TFLint
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337  # v6.3.2
+        with:
+          tflint_version: v0.64.0
+
+      - name: Cache TFLint plugins
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ runner.os }}-${{ hashFiles('.tflint.hcl') }}
+
+      # The token only raises the GitHub API rate limit for the plugin
+      # download.
+      - name: tflint --init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tflint
+        run: tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+
+  docs:
+    name: terraform-docs up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TFDOCS_VERSION: v0.24.0
+      TFDOCS_SHA256: 9005daf969de0b50134493a2c00078b49f5f5b39d021cda7c89bf4d4f3d776d3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install terraform-docs
+        run: |
+          tarball="terraform-docs-${TFDOCS_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$tarball" \
+            "https://github.com/terraform-docs/terraform-docs/releases/download/${TFDOCS_VERSION}/$tarball"
+          echo "${TFDOCS_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" terraform-docs
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: terraform-docs --output-check
+        run: |
+          for d in . modules/*/ examples/*/; do
+            terraform-docs --output-check "$d"
+          done
 
   scripts:
     name: shellcheck and lib tests (measure/)

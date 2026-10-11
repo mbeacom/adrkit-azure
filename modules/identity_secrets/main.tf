@@ -27,6 +27,10 @@ resource "azurerm_user_assigned_identity" "sync" {
   tags                = var.tags
 }
 
+# purge_protection_enabled already keeps a deleted vault and its secret
+# recoverable for soft_delete_retention_days; prevent_destroy cannot be made
+# conditional and would block callers from destroying the module.
+# tflint-ignore: azurerm_resources_missing_prevent_destroy
 resource "azurerm_key_vault" "this" {
   # Key Vault names are global, 3-24 characters.
   name                          = "${var.name_prefix}adrkitkv${random_string.kv_suffix.result}"

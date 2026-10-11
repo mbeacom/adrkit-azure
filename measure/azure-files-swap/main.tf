@@ -67,6 +67,8 @@ resource "random_string" "storage_suffix" {
   special = false
 }
 
+# Throwaway measurement rig: run.sh destroys it after the measurement.
+# tflint-ignore: azurerm_resources_missing_prevent_destroy
 resource "azurerm_storage_account" "this" {
   name                     = "${var.name_prefix}sw${random_string.storage_suffix.result}"
   location                 = local.location
@@ -82,6 +84,8 @@ resource "azurerm_storage_account" "this" {
   tags = local.tags
 }
 
+# Throwaway measurement rig: run.sh destroys it after the measurement.
+# tflint-ignore: azurerm_resources_missing_prevent_destroy
 resource "azurerm_storage_share" "this" {
   name               = "swap"
   storage_account_id = azurerm_storage_account.this.id

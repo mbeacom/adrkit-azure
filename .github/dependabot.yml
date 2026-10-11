@@ -1,0 +1,23 @@
+# Dependabot keeps the pinned GitHub Actions current (SHA pins with a version
+# comment, which Dependabot updates together).
+#
+# The terraform ecosystem is deliberately absent: Dependabot regenerates
+# .terraform.lock.hcl hashes for its own platform only, and CI's
+# `init -lockfile=readonly` needs all four platforms (CONTRIBUTING.md), so
+# its provider bumps would fail CI. Bump providers and modules by hand and
+# refresh every lock file.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Let a new release age a week before proposing it, so a compromised or
+    # yanked release is less likely to land (zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

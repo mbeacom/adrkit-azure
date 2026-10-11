@@ -1,6 +1,11 @@
 variable "location" {
   description = "Azure region for every resource. APIM, the VNet, and its integration subnet must share it."
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.location)) > 0
+    error_message = "location must not be empty."
+  }
 }
 
 variable "name_prefix" {
@@ -17,6 +22,14 @@ variable "resource_group_name" {
   description = "Name of the resource group to create. Defaults to \"<name_prefix>-adrkit-rg\"."
   type        = string
   default     = null
+
+  # 1-90 letters, digits, underscores, hyphens, periods, parentheses; no
+  # trailing period. Verified, Microsoft Learn "Naming rules and restrictions
+  # for Azure resources", 2026-10-10.
+  validation {
+    condition     = var.resource_group_name == null || can(regex("^[\\p{L}\\p{Nd}_().-]{0,89}[\\p{L}\\p{Nd}_()-]$", var.resource_group_name))
+    error_message = "resource_group_name must be 1 to 90 letters, digits, underscores, hyphens, periods, or parentheses, and must not end with a period."
+  }
 }
 
 variable "public_access" {
@@ -47,29 +60,61 @@ variable "apim_name" {
   description = "Optional explicit APIM name. APIM names are globally unique (<name>.azure-api.net); null derives \"<name_prefix>-adrkit-apim-<random 6>\", stable across applies."
   type        = string
   default     = null
+
+  # 1-50 alphanumerics and hyphens, starting with a letter and ending with an
+  # alphanumeric. Verified, Microsoft Learn "Naming rules and restrictions for
+  # Azure resources", 2026-10-10.
+  validation {
+    condition     = var.apim_name == null || can(regex("^[A-Za-z]([A-Za-z0-9-]{0,48}[A-Za-z0-9])?$", var.apim_name))
+    error_message = "apim_name must be 1 to 50 letters, digits, or hyphens, start with a letter, and end with a letter or digit."
+  }
 }
 
 variable "apim_capacity" {
   description = "APIM scale units."
   type        = number
   default     = 1
+
+  # No upper bound here: the per-tier maximum is the service's to enforce.
+  validation {
+    condition     = var.apim_capacity >= 1 && floor(var.apim_capacity) == var.apim_capacity
+    error_message = "apim_capacity must be a whole number of at least 1."
+  }
 }
 
 variable "apim_publisher_name" {
   description = "APIM publisher name (required by the service)."
   type        = string
   default     = "adrkit"
+
+  validation {
+    condition     = length(trimspace(var.apim_publisher_name)) > 0
+    error_message = "apim_publisher_name must not be empty."
+  }
 }
 
 variable "apim_publisher_email" {
   description = "APIM publisher email (required by the service)."
   type        = string
+
+  # A shape check only; the service does its own validation.
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.apim_publisher_email))
+    error_message = "apim_publisher_email must look like an email address (name@domain.tld)."
+  }
 }
 
 variable "image_repository" {
-  description = "Container image repository for the adrkit server."
+  description = "Container image repository for the adrkit server, without a tag or digest (those come from image_tag)."
   type        = string
   default     = "ghcr.io/mbeacom/adrkit"
+
+  # A registry port ("host:5000/repo") is fine; a tag or digest is not, so
+  # image_tag stays the only place a version is chosen (ADR-0056 clause 2).
+  validation {
+    condition     = length(var.image_repository) > 0 && !strcontains(var.image_repository, "@") && !can(regex(":[^/]*$", var.image_repository))
+    error_message = "image_repository must not carry a tag or digest; set the version through image_tag."
+  }
 }
 
 variable "image_tag" {
@@ -121,6 +166,12 @@ variable "sync_cron" {
   description = "Cron expression (UTC) for the corpus sync job's Schedule trigger."
   type        = string
   default     = "*/15 * * * *"
+
+  # Field count only; Container Apps validates the expression itself.
+  validation {
+    condition     = can(regex("^\\S+( \\S+){4}$", var.sync_cron))
+    error_message = "sync_cron must be a five-field cron expression separated by single spaces, for example \"*/15 * * * *\"."
+  }
 }
 
 variable "repos" {
@@ -162,12 +213,24 @@ variable "repos" {
     condition     = alltrue([for r in var.repos : startswith(r.url, "https://")])
     error_message = "Each repos[].url must be an https:// clone URL."
   }
+
+  validation {
+    condition     = alltrue([for r in var.repos : length(trimspace(r.ref)) > 0])
+    error_message = "Each repos[].ref must be a non-empty branch or tag name."
+  }
 }
 
 variable "github_app_private_key_secret_name" {
   description = "Name of the Key Vault secret that holds the GitHub App private key used by the sync job for private repositories. The secret value is set out of band; Terraform never sees it. Unused while every repo is public."
   type        = string
   default     = "github-app-private-key"
+
+  # 1-127 alphanumerics and hyphens. Verified, Microsoft Learn "Naming rules
+  # and restrictions for Azure resources", 2026-10-10.
+  validation {
+    condition     = can(regex("^[A-Za-z0-9-]{1,127}$", var.github_app_private_key_secret_name))
+    error_message = "github_app_private_key_secret_name must be 1 to 127 letters, digits, or hyphens."
+  }
 }
 
 variable "entra_tenant_id" {
@@ -178,6 +241,11 @@ variable "entra_tenant_id" {
   validation {
     condition     = !var.public_access || var.entra_tenant_id != null
     error_message = "entra_tenant_id is required when public_access = true."
+  }
+
+  validation {
+    condition     = var.entra_tenant_id == null || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.entra_tenant_id))
+    error_message = "entra_tenant_id must be a tenant GUID."
   }
 }
 
@@ -250,21 +318,44 @@ variable "portal_rate_limit_calls" {
 }
 
 variable "enable_waf" {
-  description = "Public mode only: put Azure Front Door Premium with a WAF policy in front of APIM over Private Link. Off by default; it is the largest optional cost line."
+  description = "Public mode only: put Azure Front Door Premium with a WAF policy in front of APIM over Private Link. Off by default; it is the largest optional cost line. Requires public_access = true."
   type        = bool
   default     = false
+
+  # Refused rather than silently ignored: in private mode there is no public
+  # gateway for Front Door to sit in front of.
+  validation {
+    condition     = !var.enable_waf || var.public_access
+    error_message = "enable_waf requires public_access = true."
+  }
 }
 
 variable "frontdoor_endpoint_name" {
   description = "Optional explicit Front Door endpoint name (globally unique). Null derives \"<name_prefix>-adrkit-<random 6>\". Used only when public_access && enable_waf."
   type        = string
   default     = null
+
+  # 1-50 alphanumerics and hyphens, starting and ending with an alphanumeric:
+  # the "profiles / endpoints" row (afdEndpoints has no row of its own).
+  # Verified, Microsoft Learn "Naming rules and restrictions for Azure
+  # resources", 2026-10-10.
+  validation {
+    condition     = var.frontdoor_endpoint_name == null || can(regex("^[A-Za-z0-9]([A-Za-z0-9-]{0,48}[A-Za-z0-9])?$", var.frontdoor_endpoint_name))
+    error_message = "frontdoor_endpoint_name must be 1 to 50 letters, digits, or hyphens, starting and ending with a letter or digit."
+  }
 }
 
 variable "address_space" {
-  description = "VNet address space. The module carves four subnets from it."
+  description = "VNet address space, an IPv4 CIDR of /16 or larger. The network module carves its subnets from it."
   type        = string
   default     = "10.60.0.0/16"
+
+  # Mirrors modules/network so a bad value fails at the root, before any
+  # module is evaluated.
+  validation {
+    condition     = can(cidrhost(var.address_space, 0)) && can(regex("^[0-9.]+/[0-9]+$", var.address_space)) && tonumber(split("/", var.address_space)[1]) <= 16
+    error_message = "address_space must be a valid IPv4 CIDR of /16 or larger."
+  }
 }
 
 variable "tags" {

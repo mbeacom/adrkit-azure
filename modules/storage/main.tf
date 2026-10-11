@@ -17,20 +17,41 @@ resource "random_string" "suffix" {
   special = false
 }
 
-resource "azurerm_storage_account" "this" {
+# The share holds only a cache synced from git (ADR-0056 clause 4) and is
+# rebuilt by the next sync run; prevent_destroy cannot be made conditional, so
+# it would also block callers from ever destroying the module.
+# Queue-service logging (checkov CKV_AZURE_33, trivy AZU-0057) does not
+# apply: the account serves one Files share and no queues, and its data plane
+# is private, so azurerm cannot set queue properties
+# (data_plane_available = false in the caller's provider block). Geo-redundant
+# replication (trivy AZU-0058, checkov CKV_AZURE_206) is declined on
+# purpose: see replication_type.
+# trivy:ignore:AZU-0057
+# trivy:ignore:AZU-0058
+resource "azurerm_storage_account" "this" { # tflint-ignore: azurerm_resources_missing_prevent_destroy
+  #checkov:skip=CKV_AZURE_33:No queues; the data plane is private (see the comment above).
+  #checkov:skip=CKV_AZURE_206:LRS is deliberate (replication_type); the share is a cache of git, rebuilt by the next sync.
+  #checkov:skip=CKV2_AZURE_40:Container Apps mounts Azure Files (SMB) with the account key; see the header comment.
+  #checkov:skip=CKV2_AZURE_41:No SAS is issued; the only data-plane access is the SMB mount with the account key.
+  #checkov:skip=CKV2_AZURE_38:Soft delete adds nothing to a cache of git that the next sync rebuilds.
+  #checkov:skip=CKV2_AZURE_1:Microsoft-managed keys plus infrastructure encryption; the corpus is decision records already held in git.
   # Storage account names are global, 3-24 lowercase letters and digits.
-  name                            = "${var.name_prefix}adrkit${random_string.suffix.result}"
-  location                        = var.location
-  resource_group_name             = var.resource_group_name
-  account_kind                    = "StorageV2"
-  account_tier                    = "Standard"
-  account_replication_type        = var.replication_type
-  min_tls_version                 = "TLS1_2"
-  https_traffic_only_enabled      = true
-  public_network_access_enabled   = false
-  allow_nested_items_to_be_public = false
-  shared_access_key_enabled       = true
-  tags                            = var.tags
+  name                       = "${var.name_prefix}adrkit${random_string.suffix.result}"
+  location                   = var.location
+  resource_group_name        = var.resource_group_name
+  account_kind               = "StorageV2"
+  account_tier               = "Standard"
+  account_replication_type   = var.replication_type
+  min_tls_version            = "TLS1_2"
+  https_traffic_only_enabled = true
+  # Double encryption at rest. Settable only at creation, on general-purpose
+  # v2 among others (verified, Microsoft Learn "Enable infrastructure
+  # encryption for double encryption of data", 2026-10-10).
+  infrastructure_encryption_enabled = true
+  public_network_access_enabled     = false
+  allow_nested_items_to_be_public   = false
+  shared_access_key_enabled         = true
+  tags                              = var.tags
 
   network_rules {
     default_action = "Deny"
@@ -38,6 +59,8 @@ resource "azurerm_storage_account" "this" {
   }
 }
 
+# Same reasoning as the storage account: the corpus is re-derived from git.
+# tflint-ignore: azurerm_resources_missing_prevent_destroy
 resource "azurerm_storage_share" "corpora" {
   name               = "corpora"
   storage_account_id = azurerm_storage_account.this.id
