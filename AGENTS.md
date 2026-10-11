@@ -13,8 +13,8 @@ It implements ADR-0056 (proposed, not ratified) in mbeacom/adrkit, and serves
 ADR-0055's server and ADR-0054's portal.
 
 **It is a skeleton at evidence rung 0.** Nothing has been applied. The server
-(`server` selector) is merged in adrkit#314 but not released (expected first
-in v0.20.0, the `image_tag` floor), and the sync image does not exist yet.
+(`server` selector) first shipped in adrkit v0.20.0, the `image_tag` floor;
+the sync image does not exist yet.
 CI checks only syntax, types, and provider schemas. Do not describe anything
 here as working, deployed, or tested against Azure.
 

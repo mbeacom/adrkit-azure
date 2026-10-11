@@ -76,10 +76,9 @@ variable "image_tag" {
   description = <<-EOT
     Immutable adrkit image tag, optionally with a digest, for example
     "v0.20.0" or "v0.20.0@sha256:<64 hex>". Required, with no default. The
-    minimum is the first adrkit release that contains the `server` selector
-    (ADR-0055, merged in mbeacom/adrkit#314 but not yet released); that release
-    is expected to be v0.20.0, and tags below it are refused. "latest" and the
-    moving major tag ("v0") are refused (ADR-0056 clause 2).
+    minimum is v0.20.0, the first adrkit release with the `server` selector
+    (ADR-0055, mbeacom/adrkit#314); tags below it are refused. "latest" and
+    the moving major tag ("v0") are refused (ADR-0056 clause 2).
   EOT
   type        = string
 
@@ -88,12 +87,10 @@ variable "image_tag" {
     error_message = "image_tag must be an immutable vX.Y.Z tag, optionally with @sha256:<digest>. \"latest\" and moving major tags are refused."
   }
 
-  # Semver floor: >= v0.20.0, the first release expected to contain the
-  # `server` selector. try() makes a malformed tag pass this block (regex()
+  # Semver floor: >= v0.20.0, the first release with the `server` selector. try() makes a malformed tag pass this block (regex()
   # errors on no match, and `||` does not short-circuit on Terraform 1.10), so
   # the format check above owns that message. Patch is irrelevant to the
-  # floor. If the selector ships in a different release, move both numbers
-  # here and in the message.
+  # floor.
   validation {
     condition = try(
       tonumber(regex("^v([0-9]+)\\.([0-9]+)\\.", var.image_tag)[0]) > 0 ||

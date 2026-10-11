@@ -14,11 +14,11 @@ which also serves the portal of
 
 ## Status: skeleton, not deployable yet
 
-- **The server it runs is not released yet.** The `server` selector of
-  `ghcr.io/mbeacom/adrkit` (ADR-0055) is merged
-  ([adrkit#314](https://github.com/mbeacom/adrkit/pull/314)) but no published
-  tag contains it. The first release that does is expected to be v0.20.0.
-  `image_tag` is required, has no default, and refuses tags below v0.20.0.
+- **The server is released; this deployment of it has not run.** The
+  `server` selector of `ghcr.io/mbeacom/adrkit` (ADR-0055,
+  [adrkit#314](https://github.com/mbeacom/adrkit/pull/314)) first shipped in
+  v0.20.0 (tag commit `d94698c`). `image_tag` is required, has no default,
+  and refuses tags below v0.20.0.
 - **There is no sync image.** The corpus sync job runs a placeholder image
   (`sync_image`) that writes nothing.
 - **Nothing here has been applied.** CI runs `terraform fmt`, `init
@@ -117,8 +117,8 @@ If you change the networking so that anything else can reach the app, remove
   the APIM subnet delegation), `Microsoft.Network`, `Microsoft.Storage`,
   `Microsoft.KeyVault`, `Microsoft.OperationalInsights`, and `Microsoft.Cdn`
   (Front Door only) registered.
-- A released adrkit image that contains the `server` selector: v0.20.0 or
-  later, expected to be the first (not yet available; see Status).
+- An adrkit image that contains the `server` selector: v0.20.0, the first
+  release with it, or later.
 - A sync image (not yet available).
 - For private repositories: a GitHub App with `contents: read` on those
   repositories only. Put its private key in Key Vault yourself; Terraform never
@@ -141,7 +141,7 @@ module call.
 location             = "eastus2"
 name_prefix          = "acme"
 apim_publisher_email = "platform@example.com"
-image_tag            = "v0.20.0" # v0.20.0 or later: the `server` selector
+image_tag            = "v0.20.0" # required; v0.20.0 is the first release with the `server` selector
 
 repos = [
   { key = "platform", url = "https://github.com/acme/platform", ref = "main" },
@@ -158,8 +158,9 @@ terraform apply
 `image_tag` must be an immutable `vX.Y.Z` tag, optionally with
 `@sha256:<digest>`. `latest` and the moving major tag (`v0`) are refused by
 validation (ADR-0056 clause 2). So is any tag below `v0.20.0`, the first
-release expected to contain the `server` selector; if it ships in a different
-release, move the floor in `variables.tf`.
+release with the `server` selector. Pinning a digest as well
+(`v0.20.0@sha256:<digest>`) is accepted and makes the pin immutable even if
+the tag were moved.
 
 `repos` needs at least one entry: the server refuses to start with no corpus.
 

@@ -1054,6 +1054,66 @@
         }
       }
     },
+    "/portal/{corpus}/page/icon.svg": {
+      "get": {
+        "operationId": "getPortalIcon",
+        "summary": "The decision portal's tab icon.",
+        "parameters": [
+          {
+            "name": "corpus",
+            "in": "path",
+            "required": true,
+            "description": "A configured corpus key.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file.",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No corpus is configured under this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/portal/{corpus}/vendor/board-layout.mjs": {
       "get": {
         "operationId": "getPortalBoardLayout",

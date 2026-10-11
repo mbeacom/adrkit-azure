@@ -3,9 +3,8 @@
 # One Container Apps environment on workload profiles, INTERNAL in both modes,
 # so flipping public_access never recreates the backend. It runs:
 #   - the adrkit server: the `server` selector of ghcr.io/mbeacom/adrkit
-#     (ADR-0055). Merged in mbeacom/adrkit#314 but NOT RELEASED YET; the first
-#     release containing it is expected to be v0.20.0, which the root
-#     image_tag validation sets as the floor.
+#     (ADR-0055, mbeacom/adrkit#314), first released in v0.20.0, which the
+#     root image_tag validation sets as the floor.
 #   - the corpus sync job: Schedule trigger, writes the share. Its image is a
 #     TODO placeholder; no sync image exists yet.
 #
@@ -23,7 +22,7 @@ locals {
   server_port = 8080
 
   # ADRKIT_SERVER_CORPORA in the server's list form, `key[=dir],...`
-  # (packages/server/src/config.ts at adrkit e491a785). A bare key resolves to
+  # (packages/server/src/config.ts at adrkit v0.20.0). A bare key resolves to
   # <ADRKIT_SERVER_ROOT>/<key>, with records under its default adrDir,
   # docs/adr, and the sidecar at <root>/<key>/.adrkit-corpus.json. Keys are
   # validated at the root against the server's key grammar, so no key can
@@ -137,8 +136,8 @@ resource "azurerm_container_app" "server" {
       cpu    = 0.5
       memory = "1Gi"
 
-      # The entrypoint's selector (ADR-0055 clause 12). Merged
-      # (mbeacom/adrkit#314), first expected in release v0.20.0.
+      # The entrypoint's selector (ADR-0055 clause 12), first released in
+      # adrkit v0.20.0.
       args = ["server"]
 
       # ADR-0055 clause 14: the operator's assertion that an authenticating

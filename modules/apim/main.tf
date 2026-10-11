@@ -353,7 +353,7 @@ resource "azurerm_api_management_api_operation" "method_guard" {
 # The decision portal, private mode only (ADR-0056 clause 8; ADR-0054 served
 # by ADR-0055's server): one wildcard GET forwards the per-corpus subtree
 # /portal/{corpus}/ (the page, portal-data.json, and its asset files) to the
-# server, which owns the exact file list. The six /portal/... operations in
+# server, which owns the exact file list. The /portal/... operations in
 # the vendored document are filtered out of the import above so no exact
 # template overlaps this wildcard. A HEAD is not listed, as for the imported
 # operations.
