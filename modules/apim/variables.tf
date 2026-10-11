@@ -79,6 +79,11 @@ variable "application_insights_key" {
 variable "backend_url" {
   description = "HTTPS URL of the internal adrkit server."
   type        = string
+
+  validation {
+    condition     = can(regex("^https://", var.backend_url))
+    error_message = "backend_url must start with https://"
+  }
 }
 
 variable "entra_tenant_id" {

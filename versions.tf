@@ -15,7 +15,7 @@ terraform {
     # avm-res-app-managedenvironment 0.5.1 needs ~> 2.12.
     azapi = {
       source  = "Azure/azapi"
-      version = "~> 2.12"
+      version = "~> 2.13"
     }
     random = {
       source  = "hashicorp/random"

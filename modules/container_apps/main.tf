@@ -31,14 +31,15 @@ locals {
   server_corpora = join(",", [for r in var.repos : r.key])
 
   # Job names: lowercase, at most 32 characters.
-  sync_job_name = substr("${var.name_prefix}-adrkit-sync", 0, 32)
+  name_prefix   = "${var.name_prefix}-adrkit"
+  sync_job_name = substr("${local.name_prefix}-sync", 0, 32)
 }
 
 module "environment" {
   source  = "Azure/avm-res-app-managedenvironment/azurerm"
   version = "0.5.1"
 
-  name                = "${var.name_prefix}-adrkit-cae"
+  name                = "${local.name_prefix}-cae"
   location            = var.location
   resource_group_name = var.resource_group_name
   enable_telemetry    = false
@@ -118,7 +119,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "environment" {
 }
 
 resource "azurerm_container_app" "server" {
-  name                         = "${var.name_prefix}-adrkit-server"
+  name                         = "${local.name_prefix}-server"
   resource_group_name          = var.resource_group_name
   container_app_environment_id = module.environment.resource_id
   revision_mode                = "Single"
