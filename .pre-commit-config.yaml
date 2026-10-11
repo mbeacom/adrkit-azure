@@ -1,10 +1,12 @@
 # pre-commit hooks. Install once with `pre-commit install`; run everything with
 # `pre-commit run --all-files`.
 #
-# The Terraform hooks are local and run the same commands as CI
-# (.github/workflows/ci.yml, security.yml), so a clean pre-commit run means a
-# clean CI run. They need terraform, tflint, terraform-docs, trivy, checkov,
-# and shellcheck on PATH; CONTRIBUTING.md lists the versions CI uses.
+# The local hooks run the same commands CI uses for fmt, tflint, terraform
+# test, terraform-docs, trivy, checkov, shellcheck, and the OpenAPI tool
+# check. They need those tools on PATH; CONTRIBUTING.md lists the versions.
+# A clean run is NOT the whole of CI: per-root `init`/`validate` (examples/
+# and measure/), zizmor on the workflows, and Checkov's pinned 3.3.26 image
+# run in CI only.
 # Test fixtures are byte-exact captures of tool output; leave them alone.
 exclude: ^measure/test/fixtures/
 

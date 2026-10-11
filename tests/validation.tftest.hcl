@@ -136,6 +136,14 @@ run "apim_capacity_rejects_fraction" {
   expect_failures = [var.apim_capacity]
 }
 
+run "apim_publisher_name_rejects_blank" {
+  command = plan
+  variables {
+    apim_publisher_name = "  "
+  }
+  expect_failures = [var.apim_publisher_name]
+}
+
 run "apim_publisher_email_rejects_non_email" {
   command = plan
   variables {

@@ -441,9 +441,11 @@ tagged release; actual figures are not measured.
 
 ## Quality and security checks
 
-Every check runs in CI with no cloud credentials, and locally through
-`pre-commit run --all-files` (`.pre-commit-config.yaml` runs the same
-commands; CONTRIBUTING.md lists the versions).
+Every check runs in CI with no cloud credentials. Most also run locally
+through `pre-commit run --all-files`, with the same commands
+(CONTRIBUTING.md lists the versions). These run in CI only: `init` and
+`validate` in each example and `measure/` root, zizmor, and Checkov at the
+pinned 3.3.26 (pre-commit uses whatever Checkov is installed).
 
 | Check | Config | What it covers |
 | --- | --- | --- |
@@ -482,7 +484,9 @@ suppressions, in short:
   customer-managed key (CKV_AZURE_33, CKV_AZURE_206, CKV2_AZURE_40/41/38/1,
   AZU-0057, AZU-0058): the share is a private cache of git, mounted over SMB
   with the account key, with no queues and no SAS. Infrastructure (double)
-  encryption **is** enabled.
+  encryption **is** enabled. It can be set only at creation (ForceNew), so
+  on an account created before this setting it would replace the account
+  and its share; nothing has been applied, so no such account exists.
 - Private endpoint subnet without an NSG (CKV2_AZURE_31): tracked as
   `TODO(pe-nsg)`.
 - `prevent_destroy` on the storage account, share, and Key Vault (TFLint):

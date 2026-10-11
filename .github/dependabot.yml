@@ -12,6 +12,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Let a new release age a week before proposing it, so a compromised or
+    # yanked release is less likely to land (zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]

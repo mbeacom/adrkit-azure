@@ -221,3 +221,17 @@ run "apim_diagnostics_log_no_bodies" {
     error_message = "No policy may read the response body."
   }
 }
+
+run "apim_backend_url_rejects_http" {
+  command = plan
+
+  module {
+    source = "./modules/apim"
+  }
+
+  variables {
+    backend_url = "http://test-adrkit-server.internal.example.eastus2.azurecontainerapps.io"
+  }
+
+  expect_failures = [var.backend_url]
+}

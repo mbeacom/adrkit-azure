@@ -45,15 +45,21 @@ run "network_server_reachable_only_from_apim" {
     source = "./modules/network"
   }
 
-  # Every inbound Allow comes from the APIM subnet, the Container Apps subnet
-  # itself, or Azure Load Balancer probes; nothing else.
+  # The inbound Allow rules are exactly these: APIM on the ingress ports,
+  # Azure Load Balancer probes, and the subnet itself. An extra source fails,
+  # and so does a missing rule (an empty set must not pass).
   assert {
-    condition = alltrue([
+    condition = toset([
       for r in azurerm_network_security_group.aca.security_rule :
-      contains(["10.60.2.0/24", "10.60.0.0/23", "AzureLoadBalancer"], r.source_address_prefix)
+      "${r.name}|${r.source_address_prefix}|${join(",", sort(concat(r.destination_port_ranges == null ? [] : tolist(r.destination_port_ranges), r.destination_port_range == null ? [] : [r.destination_port_range])))}"
       if r.direction == "Inbound" && r.access == "Allow"
+      ]) == toset([
+      "allow-apim-http|10.60.2.0/24|31080,80",
+      "allow-apim-https|10.60.2.0/24|31443,443",
+      "allow-azure-load-balancer-probes|AzureLoadBalancer|30000-32767",
+      "allow-intra-subnet|10.60.0.0/23|*",
     ])
-    error_message = "Inbound Allow rules on the Container Apps subnet must admit only APIM, the subnet itself, and load balancer probes."
+    error_message = "Inbound Allow rules on the Container Apps subnet must be exactly: APIM on 80/31080 and 443/31443, load balancer probes, and the subnet itself."
   }
 
   assert {
