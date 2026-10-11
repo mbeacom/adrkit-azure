@@ -3,8 +3,8 @@
 # One Container Apps environment on workload profiles, INTERNAL in both modes,
 # so flipping public_access never recreates the backend. It runs:
 #   - the adrkit server: the `server` selector of ghcr.io/mbeacom/adrkit
-#     (ADR-0055). NOT RELEASED YET (adrkit issue #296); var.server_image must
-#     name a tag that contains it before an apply can succeed.
+#     (ADR-0055, mbeacom/adrkit#314), first released in v0.20.0, which the
+#     root image_tag validation sets as the floor.
 #   - the corpus sync job: Schedule trigger, writes the share. Its image is a
 #     TODO placeholder; no sync image exists yet.
 #
@@ -16,6 +16,19 @@ locals {
   storage_ro = "corpora-ro"
   storage_rw = "corpora-rw"
   mount_path = "/corpora"
+
+  # The server's port: target_port, both probes, and ADRKIT_SERVER_PORT read
+  # this one value (8080 is also the server's default).
+  server_port = 8080
+
+  # ADRKIT_SERVER_CORPORA in the server's list form, `key[=dir],...`
+  # (packages/server/src/config.ts at adrkit v0.20.0). A bare key resolves to
+  # <ADRKIT_SERVER_ROOT>/<key>, with records under its default adrDir,
+  # docs/adr, and the sidecar at <root>/<key>/.adrkit-corpus.json. Keys are
+  # validated at the root against the server's key grammar, so no key can
+  # carry a "=" or ",". The server refuses to start on an empty value, which
+  # is why the root `repos` variable requires at least one entry.
+  server_corpora = join(",", [for r in var.repos : r.key])
 
   # Job names: lowercase, at most 32 characters.
   sync_job_name = substr("${var.name_prefix}-adrkit-sync", 0, 32)
@@ -123,8 +136,8 @@ resource "azurerm_container_app" "server" {
       cpu    = 0.5
       memory = "1Gi"
 
-      # The entrypoint's selector (ADR-0055 clause 12). Not in any released
-      # image yet (adrkit issue #296).
+      # The entrypoint's selector (ADR-0055 clause 12), first released in
+      # adrkit v0.20.0.
       args = ["server"]
 
       # ADR-0055 clause 14: the operator's assertion that an authenticating
@@ -135,11 +148,25 @@ resource "azurerm_container_app" "server" {
         value = "0.0.0.0"
       }
 
-      # TODO(server-config): ADR-0055 clause 6 says a read-only JSON config
-      # maps each corpus key to a directory, but defines no environment
-      # variable or path for it yet. Wire it here (expected: one entry per
-      # var.repos key, pointing at ${local.mount_path}/<key>) once the server
-      # (adrkit issue #296) fixes the name.
+      env {
+        name  = "ADRKIT_SERVER_PORT"
+        value = tostring(local.server_port)
+      }
+
+      # ADR-0055 clause 6: every corpus directory must resolve (realpath)
+      # inside this root, at start and before every load. The mount path
+      # exists whenever the share is mounted, which the server requires.
+      env {
+        name  = "ADRKIT_SERVER_ROOT"
+        value = local.mount_path
+      }
+
+      # One corpus per var.repos key, each at ${local.mount_path}/<key>: the
+      # layout the sync job writes (see its container below).
+      env {
+        name  = "ADRKIT_SERVER_CORPORA"
+        value = local.server_corpora
+      }
 
       volume_mounts {
         name = "corpora"
@@ -148,13 +175,13 @@ resource "azurerm_container_app" "server" {
 
       liveness_probe {
         transport = "HTTP"
-        port      = 8080
+        port      = local.server_port
         path      = "/healthz"
       }
 
       readiness_probe {
         transport = "HTTP"
-        port      = 8080
+        port      = local.server_port
         path      = "/healthz"
       }
     }
@@ -179,7 +206,7 @@ resource "azurerm_container_app" "server" {
     #   2. this ip_security_restriction allows only that subnet's CIDR at
     #      the environment's ingress proxy (an Allow rule denies all others).
     external_enabled = true
-    target_port      = 8080
+    target_port      = local.server_port
     transport        = "http"
 
     traffic_weight {
@@ -240,15 +267,24 @@ module "sync_job" {
     container = {
       name = "sync"
       # TODO(sync-image): placeholder. No sync image exists yet. The real one
-      # implements ADR-0056 clause 4 for each repo: shallow-clone docs/adr into
-      # <key>.next/, write .adrkit-corpus.json ({"commit": "<40 hex>"}) LAST,
-      # move <key>/ aside, move <key>.next/ into place.
+      # implements ADR-0056 clause 4 for each repo, writing exactly the layout
+      # the server reads (ADRKIT_SERVER_CORPORA above, bare keys):
+      #   <root>/<key>/docs/adr/...              the records, at the same
+      #                                          repository-relative paths
+      #   <root>/<key>/.adrkit-corpus.json       {"commit": "<40 hex>"}, the
+      #                                          full SHA of the tree written
+      # where <root> is ADRKIT_SYNC_ROOT (the same share the server mounts at
+      # ADRKIT_SERVER_ROOT). Per repo: shallow-clone docs/adr into
+      # <root>/<key>.next/, write .adrkit-corpus.json there LAST, move <key>/
+      # aside, move <key>.next/ into place. "<key>.next" can never collide
+      # with a corpus, because a key cannot contain ".".
       image  = var.sync_image
       cpu    = 0.5
       memory = "1Gi"
 
       # TODO(sync-contract): these variable names are a proposal for the
-      # not-yet-written sync image, not an existing contract.
+      # not-yet-written sync image, not an existing contract. The on-share
+      # layout above is fixed by the server; the names here are not.
       env = [
         { name = "ADRKIT_SYNC_ROOT", value = local.mount_path },
         { name = "ADRKIT_SYNC_REPOS", value = jsonencode(var.repos) },

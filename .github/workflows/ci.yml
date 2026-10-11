@@ -76,10 +76,17 @@ jobs:
       # shellcheck is preinstalled on GitHub's Ubuntu runners. The scripts
       # create billed resources and are never run in CI; this checks them only.
       - name: shellcheck
-        run: shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh measure/test/lib_test.sh
+        run: shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh measure/azure-files-swap/swap.sh measure/test/lib_test.sh scripts/check-openapi-tools.sh
 
       # Unit tests for how an apply failure is attributed to a resource
       # (which decides FAIL versus ERROR). Fixtures only; no Azure, no
       # Terraform.
       - name: lib tests
         run: bash measure/test/lib_test.sh
+
+      # Every MCP tool in modules/apim/openapi/mcp-tools.json must be a GET
+      # /api/v1 operation in the vendored server OpenAPI document, and the
+      # document must have no non-GET operation. jq is preinstalled on
+      # GitHub's Ubuntu runners. Files only; no Azure, no Terraform.
+      - name: OpenAPI tool check
+        run: bash scripts/check-openapi-tools.sh

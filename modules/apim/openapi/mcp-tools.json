@@ -1,0 +1,9 @@
+{
+  "listCorpora": "List the configured decision corpora and the commit each is served at.",
+  "listRecords": "List the architecture decision records of one corpus.",
+  "getRecord": "Get one architecture decision record by id.",
+  "getGraph": "Get the decision relationship graph of one corpus.",
+  "getQueue": "Get the architecture review queue of one corpus.",
+  "getIssues": "Get the corpus findings (lint view) of one corpus.",
+  "getGoverning": "Get the decisions that govern a repository path."
+}

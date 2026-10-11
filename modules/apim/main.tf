@@ -56,28 +56,32 @@ locals {
   mcp_api_name  = "adrkit-mcp"
   mcp_api_path  = "adrkit-mcp"
 
-  # The portal at "/" is published in private mode only (ADR-0056 clause 8):
-  # a browser carries no bearer token, so the public-mode token policy would
-  # make it unreachable anyway.
-  openapi_source = jsondecode(file("${path.module}/openapi/adrkit-server.placeholder.json"))
+  # The server's own OpenAPI document (ADR-0055 clause 11), vendored from
+  # adrkit; see openapi/README.md for its source commit and how to regenerate
+  # it. What the REST API imports from it:
+  #   - /healthz never: it is probed inside the environment and never
+  #     published (ADR-0056 clause 6).
+  #   - /portal/... never as individual operations: the portal_assets wildcard
+  #     operation below forwards that whole subtree instead.
+  #   - "/" (getPortal: a relative redirect to the one corpus portal, or the
+  #     list of portals) in private mode only (ADR-0056 clause 8): a browser
+  #     carries no bearer token, so the public-mode token policy would make
+  #     it unreachable anyway.
+  openapi_source = jsondecode(file("${path.module}/openapi/adrkit-server.openapi.json"))
   openapi_paths = {
-    for p, v in local.openapi_source.paths : p => v if !(var.public_access && p == "/")
+    for p, v in local.openapi_source.paths : p => v
+    if p != "/healthz" && !startswith(p, "/portal/") && !(var.public_access && p == "/")
   }
   openapi_document = jsonencode(merge(local.openapi_source, { paths = local.openapi_paths }))
 
-  # Operations exposed as MCP tools: the data routes only. Not the portal, not
-  # /openapi.json. Each tool names its backing GET operation.
-  # TODO(openapi): confirm APIM names imported operations after operationId;
-  # if it normalises them, these references must follow.
-  mcp_tools = {
-    listCorpora  = "List the configured decision corpora and the commit each is served at."
-    listRecords  = "List the architecture decision records of one corpus."
-    getRecord    = "Get one architecture decision record by id."
-    getGraph     = "Get the decision relationship graph of one corpus."
-    getQueue     = "Get the architecture review queue of one corpus."
-    getIssues    = "Get the corpus findings (lint view) of one corpus."
-    getGoverning = "Get the decisions that govern a repository path."
-  }
+  # Operations exposed as MCP tools: the /api/v1 data operations only. Not
+  # getHealth, not the portal (getPortal and /portal/...), not getOpenApi.
+  # Each key is the backing GET operation's operationId and each value the
+  # tool description. scripts/check-openapi-tools.sh fails CI if a key is not
+  # a GET operation under /api/v1/ in the vendored document.
+  # Unverified: that APIM names imported operations after their operationId,
+  # which the tool references below assume (measured by measure/mcp-2026).
+  mcp_tools = jsondecode(file("${path.module}/openapi/mcp-tools.json"))
 
   policy_vars = {
     public_access     = var.public_access
@@ -293,9 +297,10 @@ resource "azurerm_api_management_api" "rest" {
   resource_group_name = var.resource_group_name
   revision            = "1"
   display_name        = "adrkit REST (read-only)"
-  # TODO(portal-path): the portal is served under /adrkit/ through APIM, not
-  # at the gateway root. Confirm the portal bundle uses relative asset paths,
-  # and add a wildcard GET operation for its static assets.
+  # Everything, the portal included, is under this API's path. The server's
+  # portal links and its "/" redirect are relative (adrkit PR #314), so the
+  # /adrkit base path survives: /adrkit/ redirects to /adrkit/portal/<key>/
+  # when exactly one corpus is configured.
   path                  = local.rest_api_path
   protocols             = ["https"]
   service_url           = var.backend_url
@@ -345,6 +350,35 @@ resource "azurerm_api_management_api_operation" "method_guard" {
   }
 }
 
+# The decision portal, private mode only (ADR-0056 clause 8; ADR-0054 served
+# by ADR-0055's server): one wildcard GET forwards the per-corpus subtree
+# /portal/{corpus}/ (the page, portal-data.json, and its asset files) to the
+# server, which owns the exact file list. The /portal/... operations in
+# the vendored document are filtered out of the import above so no exact
+# template overlaps this wildcard. A HEAD is not listed, as for the imported
+# operations.
+# Unverified: Microsoft Learn documents the "/*" wildcard template; a
+# wildcard after a literal segment ("/portal/*") is not shown there, and
+# neither is how APIM forwards the trailing slash of /portal/<key>/ (the
+# server's route matcher is segment-exact, so /portal/<key> without the slash
+# is a 404 from the backend).
+resource "azurerm_api_management_api_operation" "portal_assets" {
+  count = var.public_access ? 0 : 1
+
+  operation_id        = "portal-assets"
+  api_name            = azurerm_api_management_api.rest.name
+  api_management_name = azurerm_api_management.this.name
+  resource_group_name = var.resource_group_name
+  display_name        = "Decision portal (per corpus)"
+  method              = "GET"
+  url_template        = "/portal/*"
+  description         = "The decision portal of each corpus, at /portal/{corpus}/, forwarded to the server. Private mode only; never an MCP tool."
+
+  response {
+    status_code = 200
+  }
+}
+
 resource "azurerm_api_management_product_api" "rest" {
   product_id          = azurerm_api_management_product.adrkit.product_id
   api_name            = azurerm_api_management_api.rest.name
@@ -355,6 +389,7 @@ resource "azurerm_api_management_product_api" "rest" {
   depends_on = [
     azurerm_api_management_api_policy.rest,
     azurerm_api_management_api_operation.method_guard,
+    azurerm_api_management_api_operation.portal_assets,
   ]
 }
 

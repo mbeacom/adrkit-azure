@@ -13,7 +13,8 @@ It implements ADR-0056 (proposed, not ratified) in mbeacom/adrkit, and serves
 ADR-0055's server and ADR-0054's portal.
 
 **It is a skeleton at evidence rung 0.** Nothing has been applied. The server
-image (`server` selector, adrkit#296) and the sync image do not exist yet.
+(`server` selector) first shipped in adrkit v0.20.0, the `image_tag` floor;
+the sync image does not exist yet.
 CI checks only syntax, types, and provider schemas. Do not describe anything
 here as working, deployed, or tested against Azure.
 
@@ -32,7 +33,9 @@ here as working, deployed, or tested against Azure.
 | `modules/container_apps` | Internal environment (AVM), server app, sync job (AVM) |
 | `modules/apim` | APIM, outbound integration, private endpoint, `publicNetworkAccess` step, REST and MCP APIs, policies |
 | `modules/apim/policies/*.xml.tftpl` | API policies, rendered with `templatefile()` |
-| `modules/apim/openapi/adrkit-server.placeholder.json` | Hand-written stand-in for the server's `/openapi.json` |
+| `modules/apim/openapi/adrkit-server.openapi.json` | The server's own `/openapi.json`, vendored from adrkit (source commit and regeneration in that directory's README) |
+| `modules/apim/openapi/mcp-tools.json` | operationId to description of the MCP tools; read by `modules/apim` |
+| `scripts/check-openapi-tools.sh` | CI check: every MCP tool is a `GET /api/v1` operation in the vendored document |
 | `modules/frontdoor` | Optional Front Door Premium + WAF over Private Link |
 | `measure/` | Rung-1 measurement harness: five standalone Terraform roots plus bash scripts that create **billed** Azure resources |
 | `measure/RESULTS.md` | Template for the maintainer to transcribe a run into |
@@ -54,8 +57,10 @@ terraform validate
 
 # Scripts
 shellcheck -x measure/run.sh measure/lib.sh measure/*/measure.sh \
-  measure/azure-files-swap/swap.sh measure/test/lib_test.sh
+  measure/azure-files-swap/swap.sh measure/test/lib_test.sh \
+  scripts/check-openapi-tools.sh
 bash measure/test/lib_test.sh
+bash scripts/check-openapi-tools.sh
 ```
 
 CI uses Terraform 1.13.3; the floor is 1.10 (an AVM module uses an ephemeral
@@ -118,8 +123,17 @@ terraform providers lock \
 - **`public_access` changes the gateway only.** The environment is internal in
   both modes; flipping the flag must not recreate the backend.
 - **MCP tool references** in `local.mcp_tools` assume APIM names imported
-  operations after their OpenAPI `operationId` (unverified,
-  `TODO(openapi)`).
+  operations after their OpenAPI `operationId` (unverified; measured by
+  `measure/mcp-2026`). Tools are the `/api/v1` data operations only, listed in
+  `modules/apim/openapi/mcp-tools.json`; `scripts/check-openapi-tools.sh`
+  enforces that against the vendored document.
+- **The server's configuration and the share layout are one contract.**
+  `ADRKIT_SERVER_CORPORA` is the `repos[].key` list (bare keys), so each corpus
+  is `<ADRKIT_SERVER_ROOT>/<key>` with records in `docs/adr` and the sidecar
+  `.adrkit-corpus.json` at its top. Change one side and the sync job's layout
+  (or the env var) must follow.
+- **`/healthz` is never imported into the REST API**, and in public mode
+  neither is the portal (`/`, `/portal/...`); see `local.openapi_paths`.
 - **`measure/public-network-access` mirrors `modules/apim` steps 1 to 4** (same
   resource types, API version, bodies, `ignore_changes`) rather than calling
   the module. If you change those steps in one place, change the other.
