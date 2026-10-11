@@ -312,16 +312,23 @@ plan does not revert step 4.
   policy. Every API requires a subscription key and joins the product only
   after its policy, so in that window it answers only to APIM's built-in
   all-access subscription key, an administrator credential. Unmeasured.
-- *Private to public flip with the portal on:* one apply would destroy the
-  keyless portal API and enable public access with nothing ordering the two,
-  so the gateway could open while the portal still exists. Validation
-  therefore refuses `public_access = true` with `enable_portal = true` (at
-  the root and in `modules/apim`), which forces two applies: first
-  `enable_portal = false` with `public_access = false` (the portal is
-  destroyed while the gateway is still private), then `public_access =
-  true`. No `precondition` backs this up: a precondition sees configuration,
-  not state, and in configuration the portal's count is already 0 whenever
-  `public_access = true`, so it could never fail where the validation passed.
+- *Private to public flip with the portal on:* the same apply destroys the
+  keyless portal API (its policy and operations too) and creates
+  `enable_public_access`. What orders them is a `depends_on` from
+  `enable_public_access` to every portal resource: Terraform finishes the
+  portal's destroy before it creates the resource that opens the gateway.
+  That ordering was measured locally with `terraform_data` stand-ins on
+  Terraform 1.13.3 (the CI pin), 2026-10-10: with the edge, every portal
+  destroy finished before the gateway create; without it, they ran
+  concurrently. It was not measured on the 1.10 floor, and not against
+  Azure (that APIM has finished deleting the API when azurerm's delete
+  returns is assumed). Read the plan before applying a flip.
+  The validation that refuses `public_access = true` with
+  `enable_portal = true` is defence in depth only: it checks configuration,
+  not state, so it does not by itself stop a one-apply flip (a private
+  deployment changed straight to the public example above passes it). Two
+  applies (`enable_portal = false` first, while still private) remain a
+  stricter option, not a requirement.
 
 ADR-0056 clause 7 also asks for a global deny-all `ip-filter` from creation;
 the skeleton does not add one, because a global deny-all would also block

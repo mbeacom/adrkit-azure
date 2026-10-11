@@ -220,21 +220,22 @@ variable "enable_portal" {
     APIM API with no subscription key (a browser's relative subrequests carry
     none), so anyone who can reach the private endpoint can read it. Never
     created in public mode (ADR-0056 clause 8): public_access = true requires
-    enable_portal = false, and validation refuses the combination, so going
-    public takes two applies (enable_portal = false first, while still
-    private; then public_access = true). Set false also to keep every route
+    enable_portal = false, and validation refuses the combination. A private
+    -> public flip in one apply destroys the portal before the gateway opens
+    (dependency ordering in modules/apim). Set false also to keep every route
     key-protected in private mode.
   EOT
   type        = bool
   default     = true
 
-  # A false -> true flip with the keyless portal on would destroy the portal
-  # and open the gateway in one apply, in no enforced order (see README).
-  # Refusing the combination forces two applies: enable_portal = false while
-  # still private (portal destroyed), then public_access = true.
+  # Defence in depth, not the ordering guarantee: it only makes a public-mode
+  # configuration state its intent. The ordering of a private -> public flip
+  # comes from enable_public_access's depends_on on the portal resources
+  # (modules/apim), which makes one apply destroy the portal before the
+  # gateway opens.
   validation {
     condition     = !(var.public_access && var.enable_portal)
-    error_message = "enable_portal must be false when public_access = true. To go public, first apply enable_portal = false with public_access = false (the keyless portal is destroyed while the gateway is still private), then apply public_access = true."
+    error_message = "enable_portal must be false when public_access = true: the keyless portal is never created in public mode (ADR-0056 clause 8)."
   }
 }
 

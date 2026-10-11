@@ -114,17 +114,18 @@ variable "rate_limit_period_seconds" {
 }
 
 variable "enable_portal" {
-  description = "Create the private-mode portal API. Must be false when public_access = true."
+  description = "Create the private-mode portal API. Must be false when public_access = true (never created in public mode)."
   type        = bool
   default     = true
 
-  # A false -> true flip with the keyless portal on would destroy the portal
-  # and open the gateway in one apply, in no enforced order (see README).
-  # Refusing the combination forces two applies: enable_portal = false while
-  # still private (portal destroyed), then public_access = true.
+  # Defence in depth, not the ordering guarantee: it only makes a public-mode
+  # configuration state its intent. The ordering of a private -> public flip
+  # comes from enable_public_access's depends_on on the portal resources
+  # (modules/apim), which makes one apply destroy the portal before the
+  # gateway opens.
   validation {
     condition     = !(var.public_access && var.enable_portal)
-    error_message = "enable_portal must be false when public_access = true. To go public, first apply enable_portal = false with public_access = false (the keyless portal is destroyed while the gateway is still private), then apply public_access = true."
+    error_message = "enable_portal must be false when public_access = true: the keyless portal is never created in public mode (ADR-0056 clause 8)."
   }
 }
 

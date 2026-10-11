@@ -203,11 +203,15 @@ resource "azapi_update_resource" "disable_public_access" {
 
 # Step 4, public mode: open the gateway only AFTER the public-mode policies,
 # the catch-all method guard, diagnostics, and product bindings exist.
-# The keyless portal API is not ordered here: var.enable_portal's validation
-# refuses public_access = true with enable_portal = true, so a private ->
-# public flip destroys the portal in an earlier apply. A precondition here
-# would add nothing: it sees configuration, where the portal's count is
-# already 0 in public mode, not the state that still holds it.
+# It also waits for every keyless portal resource. On a private -> public
+# flip those are being destroyed (count 1 -> 0) in the same apply, and this
+# edge makes Terraform finish their destroy before it creates this resource,
+# so the gateway never opens while the portal API exists in state.
+# Measured locally with terraform_data stand-ins on Terraform 1.13.3 (the CI
+# pin), 2026-10-10: with the edge, every portal destroy finished before the
+# gateway create in all runs; without it, the two ran concurrently. Not
+# measured on the 1.10 floor, and not against Azure: that APIM has finished
+# deleting the API when azurerm's delete returns is assumed.
 resource "azapi_update_resource" "enable_public_access" {
   count = var.public_access ? 1 : 0
 
@@ -229,6 +233,12 @@ resource "azapi_update_resource" "enable_public_access" {
     azurerm_api_management_product_api.rest,
     azapi_resource.mcp_product,
     azurerm_api_management_diagnostic.service,
+    # The keyless portal (count 0 in public mode): destroyed first on a flip.
+    azurerm_api_management_api.portal,
+    azurerm_api_management_api_policy.portal,
+    azurerm_api_management_api_operation.portal_root,
+    azurerm_api_management_api_operation.portal_files,
+    azurerm_api_management_api_operation.portal_method_guard,
   ]
 }
 
