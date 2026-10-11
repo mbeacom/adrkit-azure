@@ -14,11 +14,11 @@ which also serves the portal of
 
 ## Status: skeleton, not deployable yet
 
-- **The server it runs does not exist yet.** The `server` selector of
-  `ghcr.io/mbeacom/adrkit` (ADR-0055,
-  [adrkit#296](https://github.com/mbeacom/adrkit/issues/296)) is not
-  implemented or released. `image_tag` is required and has no default for
-  that reason: no published tag contains the selector today.
+- **The server it runs is not released yet.** The `server` selector of
+  `ghcr.io/mbeacom/adrkit` (ADR-0055) is merged
+  ([adrkit#314](https://github.com/mbeacom/adrkit/pull/314)) but no published
+  tag contains it. The first release that does is expected to be v0.20.0.
+  `image_tag` is required, has no default, and refuses tags below v0.20.0.
 - **There is no sync image.** The corpus sync job runs a placeholder image
   (`sync_image`) that writes nothing.
 - **Nothing here has been applied.** CI runs `terraform fmt`, `init
@@ -56,8 +56,9 @@ at the end of this file.
             |  Container Apps environment (workload profiles, INTERNAL in both modes)   |
             |    server app   ghcr.io/mbeacom/adrkit:<image_tag>  args: ["server"]      |
             |                 ADRKIT_SERVER_HOST=0.0.0.0, port 8080, min replicas 1     |
+            |                 ADRKIT_SERVER_ROOT=/corpora, CORPORA=<repos keys>         |
             |                 /corpora  <- Azure Files, mounted READ-ONLY               |
-            |    sync job     Schedule trigger, writes /corpora (READ-WRITE)            |
+            |    sync job     Schedule trigger, writes /corpora/<key>/ (READ-WRITE)     |
             |                 TODO placeholder image                                    |
             |                                                                           |
             |  private endpoints: APIM gateway, Azure Files, Key Vault                  |
@@ -98,7 +99,7 @@ If you change the networking so that anything else can reach the app, remove
 | `modules/identity_secrets` | User-assigned identity for the sync job, Key Vault (RBAC, private endpoint, public access off), Key Vault Secrets User role |
 | `modules/storage` | Storage account (public access off) with the `corpora` Files share and its private endpoint |
 | `modules/container_apps` | Environment via AVM `avm-res-app-managedenvironment` 0.5.1; server app (native `azurerm_container_app`); sync job via AVM `avm-res-app-job` 0.2.2; the environment's private DNS zone |
-| `modules/apim` | APIM v2 (globally unique name: random suffix or `apim_name`), outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API from an OpenAPI placeholder with catch-all method-guard operations, MCP API and tools (azapi), policies from XML templates, Application Insights logger and service diagnostic (no body logging) |
+| `modules/apim` | APIM v2 (globally unique name: random suffix or `apim_name`), outbound integration and the `publicNetworkAccess` step (azapi), private endpoint, backend, product, REST API imported from the server's vendored OpenAPI document, with catch-all method-guard operations and a private-mode portal wildcard, MCP API and tools (azapi), policies from XML templates, Application Insights logger and service diagnostic (no body logging) |
 | `modules/frontdoor` | Optional Front Door Premium with WAF, Private Link origin to APIM (endpoint name: random suffix or `frontdoor_endpoint_name`); only when `public_access && enable_waf` |
 
 ## Prerequisites
@@ -116,8 +117,8 @@ If you change the networking so that anything else can reach the app, remove
   the APIM subnet delegation), `Microsoft.Network`, `Microsoft.Storage`,
   `Microsoft.KeyVault`, `Microsoft.OperationalInsights`, and `Microsoft.Cdn`
   (Front Door only) registered.
-- A released adrkit image that contains the `server` selector (not yet
-  available; see Status).
+- A released adrkit image that contains the `server` selector: v0.20.0 or
+  later, expected to be the first (not yet available; see Status).
 - A sync image (not yet available).
 - For private repositories: a GitHub App with `contents: read` on those
   repositories only. Put its private key in Key Vault yourself; Terraform never
@@ -140,7 +141,7 @@ module call.
 location             = "eastus2"
 name_prefix          = "acme"
 apim_publisher_email = "platform@example.com"
-image_tag            = "vX.Y.Z" # a release that contains the `server` selector
+image_tag            = "v0.20.0" # v0.20.0 or later: the `server` selector
 
 repos = [
   { key = "platform", url = "https://github.com/acme/platform", ref = "main" },
@@ -156,7 +157,36 @@ terraform apply
 
 `image_tag` must be an immutable `vX.Y.Z` tag, optionally with
 `@sha256:<digest>`. `latest` and the moving major tag (`v0`) are refused by
-validation (ADR-0056 clause 2).
+validation (ADR-0056 clause 2). So is any tag below `v0.20.0`, the first
+release expected to contain the `server` selector; if it ships in a different
+release, move the floor in `variables.tf`.
+
+`repos` needs at least one entry: the server refuses to start with no corpus.
+
+### How the server and the sync job meet
+
+The server is configured from `repos` and the share's mount path (ADR-0055
+clause 6, `packages/server/src/config.ts` in adrkit):
+
+| Variable | Value |
+| --- | --- |
+| `ADRKIT_SERVER_ROOT` | `/corpora`, the read-only Azure Files mount |
+| `ADRKIT_SERVER_CORPORA` | the `repos[].key` values joined with `,` (the server's `key[=dir],...` list form, bare keys) |
+| `ADRKIT_SERVER_HOST` | `0.0.0.0` (see the network boundary above) |
+| `ADRKIT_SERVER_PORT` | `8080` |
+
+A bare key resolves to `<root>/<key>`, so the sync job must write, for each
+repository:
+
+```text
+/corpora/<key>/docs/adr/...            the records, at their repository paths
+/corpora/<key>/.adrkit-corpus.json     {"commit": "<40 hex>"}, written last
+```
+
+through ADR-0056 clause 4's `<key>.next/` two-move swap. A key cannot
+contain `.`, so `<key>.next` never collides with a corpus. A corpus
+directory that does not exist yet is accepted at start; a present directory
+with a missing or invalid sidecar answers `503`.
 
 ## The two modes
 
@@ -171,7 +201,11 @@ routes and tools are identical.
   combination as end-to-end network isolation.
 - After the private endpoint exists, `publicNetworkAccess` is set to
   `Disabled` (the two-step apply below).
-- The portal at `/` is published (under the REST API's path).
+- The decision portal is published under the REST API's path: each corpus
+  at `/adrkit/portal/<key>/`, forwarded by one wildcard `GET /portal/*`
+  operation. `/adrkit/` redirects there when `repos` has exactly one entry
+  and lists the portals otherwise. The server's links and redirect are
+  relative, so the `/adrkit` base path survives.
 - Callers authenticate with an APIM subscription key on the `adrkit` product.
 - The default gateway host name resolves to the private endpoint only from
   networks linked to the `privatelink.azure-api.net` zone. A private custom
@@ -191,7 +225,7 @@ Everything above, plus, on every API:
 - optionally (`enable_waf = true`) Azure Front Door Premium with a WAF policy,
   reaching APIM over Private Link. Off by default.
 
-The portal at `/` is **left out** in public mode: a browser carries no bearer
+The portal (`/` and `/portal/...`) is **left out** in public mode: a browser carries no bearer
 token, so the token policy would make it unreachable anyway. Serving it
 publicly needs an interactive sign-in in front, which is a later change
 (ADR-0056 clause 8).
@@ -260,7 +294,10 @@ Nothing in this deployment changes a decision record. Recording a person's act
 (`accept`, `approve`, `object`, `resolve`) stays a human-run adrkit CLI command
 and a pull request (ADR-0044, ADR-0051, ADR-0052).
 
-- The REST API publishes only the `GET` operations of ADR-0055's routes.
+- The REST API publishes only the `GET` operations of ADR-0055's routes,
+  imported from the server's own OpenAPI document (vendored in
+  `modules/apim/openapi/`; see the README there for its adrkit commit and how
+  to regenerate it).
   APIM matches a request to an operation before API policies run, and an
   unmatched method would end as `404 OperationNotFound`, so the API also has
   catch-all `/*` operations for `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
@@ -268,7 +305,11 @@ and a pull request (ADR-0044, ADR-0051, ADR-0052).
   `Allow: GET, HEAD`; none is forwarded to the backend or exposed as a tool.
   `/healthz` is probed inside the environment and never published.
 - The MCP API is "REST API as MCP server": tools only, each mapped to one of
-  those `GET` operations. MCP's streamable HTTP transport uses `POST`, so the
+  the seven `/api/v1` data operations (`listCorpora`, `listRecords`,
+  `getRecord`, `getGraph`, `getQueue`, `getIssues`, `getGoverning`); never
+  `getHealth`, `getOpenApi`, or a portal operation. CI
+  (`scripts/check-openapi-tools.sh`) fails if a tool's operation is missing
+  from the vendored document or is not a `GET /api/v1/...` operation. MCP's streamable HTTP transport uses `POST`, so the
   method guard is on the REST API, not the MCP API; a tool call still lands on
   a `GET` operation and passes the REST API's guard.
 - The server mounts the corpus share through a **read-only** environment
@@ -351,6 +392,13 @@ Unverified (nothing has been applied). The first six items are what
   subnet's address as the client IP (it should, since traffic stays in the
   VNet), and that the NSG rule table is complete for this environment (it
   follows Microsoft Learn's workload-profile table).
+- That APIM accepts the portal's `GET /portal/*` wildcard template
+  (Microsoft Learn documents `/*`; a wildcard after a literal segment is not
+  shown), and how it forwards the trailing slash of `/portal/<key>/` and of
+  the API root `/adrkit/` (the server's matcher is segment-exact, so
+  `/portal/<key>` without the slash is a backend `404`). Also whether a
+  re-import of the OpenAPI document leaves the separately created operations
+  (portal wildcard, method guard) in place.
 - That the `/*` catch-all operations take precedence the way the method
   guard assumes, and that APIM resolves the true/false ordering exactly as
   described above (dependency order is Terraform's; the policy behaviour is
@@ -363,12 +411,9 @@ Unverified (nothing has been applied). The first six items are what
 
 | Tag | Where | What |
 | --- | --- | --- |
-| `TODO(server-config)` | `modules/container_apps` | ADR-0055 clause 6's corpus config (key to directory) has no defined env var or path yet; wire it when adrkit#296 fixes the name |
 | `TODO(sync-image)` | root `sync_image`, `modules/container_apps` | No sync image exists; the job runs a placeholder |
-| `TODO(sync-contract)` | `modules/container_apps` | Sync job env var names are a proposal, not a contract |
+| `TODO(sync-contract)` | `modules/container_apps` | Sync job env var names are a proposal, not a contract (the on-share layout `<root>/<key>/docs/adr`, `<root>/<key>/.adrkit-corpus.json` is fixed by the server) |
 | `TODO(github-app)` | `modules/container_apps` | GitHub App ID and installation ID are not wired |
-| `TODO(openapi)` | `modules/apim` | OpenAPI document is a hand-written placeholder; replace with the server's `/openapi.json`; confirm operation naming |
-| `TODO(portal-path)` | `modules/apim` | Portal is served under `/adrkit/`; confirm relative asset paths and add a wildcard operation for assets |
 | `TODO(webhook)` | `modules/apim` | Public-mode webhook not built, pending HMAC measurement |
 | `TODO(egress)` | `modules/network` | Outbound restrictions for the APIM integration subnet and the environment |
 | `TODO(rung-1)` | `modules/storage` | Measure the two-move swap on Azure Files (scripted in `measure/azure-files-swap`, not yet run) |

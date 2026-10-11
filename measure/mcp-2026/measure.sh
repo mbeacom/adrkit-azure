@@ -46,7 +46,7 @@ measure_mcp_2026() {
   if [ "$rc" -ne 0 ]; then
     if tf_error_attributed_to "$LAST_APPLY_LOG" azapi_resource.mcp_tool; then
       record "$M4" "MCP tool referencing operation getHello" FAIL \
-        "tool create failed; APIM may not name imported operations by operationId (TODO(openapi)); see $(basename "$LAST_APPLY_LOG")"
+        "tool create failed; APIM may not name imported operations by operationId (modules/apim local.mcp_tools assumes it does); see $(basename "$LAST_APPLY_LOG")"
     else
       record "$M4" "apply" ERROR \
         "terraform apply exited $rc, errors on: $(tf_error_summary "$LAST_APPLY_LOG"); inconclusive. See $(basename "$LAST_APPLY_LOG")"

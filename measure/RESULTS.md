@@ -124,7 +124,7 @@ Confirms or refutes: ADR-0056 Context fact 5 ("Unverified. Whether APIM
 passes MCP protocol revision `2026-07-28`"), **clause 6** (REST API as MCP
 server), the Revisit-if "APIM is measured against a `2026-07-28` client", and
 ADR-0055 clause 15 and action item 8. Side check: the skeleton's
-`TODO(openapi)` operation-naming assumption.
+operation-naming assumption (`local.mcp_tools` in `modules/apim`).
 
 | Check | legacy (2025) | modern (2026-07-28) | auto |
 | --- | --- | --- | --- |
@@ -166,8 +166,8 @@ reachable HTTPS host and rerun `--only mcp-2026` to tell them apart.
 Either answer is useful: ADR-0055 clause 15 already says which revisions APIM
 serves is APIM's. Record the result in both ADRs. If modern fails, say so in
 the adrkit-azure README and in ADR-0055's clause 15 text, so a 2026-only
-client knows. If the tool create failed, fix `TODO(openapi)` before the real
-OpenAPI document lands.
+client knows. If the tool create failed, change how `modules/apim` builds its
+tool references (`local.mcp_tools`) before the first real apply.
 
 Raw evidence (`mcp-2026.modern.tools-list.json` and its `.stderr`, and the
 same for any failing era):

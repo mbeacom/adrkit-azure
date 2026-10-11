@@ -16,7 +16,7 @@
 # Side measurement: the tool references operation "getHello", the OpenAPI
 # operationId. If APIM names imported operations differently, the tool's
 # create fails (or the tool cannot resolve). That is the skeleton's
-# TODO(openapi) naming assumption.
+# operation-naming assumption (local.mcp_tools in modules/apim).
 #
 # Public instance, no VNet: the question is protocol, not network. Callers
 # need a subscription key, as in the skeleton.

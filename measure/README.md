@@ -105,8 +105,9 @@ not a backend, so a `tools/call` failure in all three eras alike may mean
 APIM's MCP path skips the REST API's policy rather than an era failure;
 [`RESULTS.md`](./RESULTS.md) says how to tell them apart.
 
-As a side effect it tests the skeleton's `TODO(openapi)` assumption: the tool
-references the operation by its OpenAPI `operationId`. If APIM names it
+As a side effect it tests the skeleton's operation-naming assumption
+(`local.mcp_tools` in `modules/apim`): the tool references the operation by
+its OpenAPI `operationId`. If APIM names it
 differently, the tool's create fails, and that is recorded.
 
 **5. `hmac-policy`** creates a public Standard v2 instance, a secret named
@@ -252,9 +253,10 @@ seconds those commands run. They protect throwaway resources only.
 - **Clause 7's API ordering and the public-mode first-apply window.** Both need
   the full `modules/apim` with APIs and policies, and a way to observe the
   window from outside, which is not a single scripted check.
-- **ADR-0055's real reload.** The server does not exist yet
-  ([adrkit#296](https://github.com/mbeacom/adrkit/issues/296)). Measurement 3
-  models clause 5's rule in shell.
+- **ADR-0055's real reload.** The server is merged
+  ([adrkit#314](https://github.com/mbeacom/adrkit/pull/314)) but not yet
+  released, and this harness does not run it. Measurement 3 models clause 5's
+  rule in shell.
 - **The webhook's ARM `jobs/start` call** from APIM's managed identity.
   Measurement 5 covers only the HMAC check that gates it.
 - **Assumptions only a real run can check.** If one is wrong the script

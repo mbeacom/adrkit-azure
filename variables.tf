@@ -75,9 +75,10 @@ variable "image_repository" {
 variable "image_tag" {
   description = <<-EOT
     Immutable adrkit image tag, optionally with a digest, for example
-    "v0.19.0" or "v0.19.0@sha256:<64 hex>". Required, with no default, because
-    the `server` selector this deployment runs (ADR-0055, adrkit issue #296) is
-    not released yet: no published tag contains it today. "latest" and the
+    "v0.20.0" or "v0.20.0@sha256:<64 hex>". Required, with no default. The
+    minimum is the first adrkit release that contains the `server` selector
+    (ADR-0055, merged in mbeacom/adrkit#314 but not yet released); that release
+    is expected to be v0.20.0, and tags below it are refused. "latest" and the
     moving major tag ("v0") are refused (ADR-0056 clause 2).
   EOT
   type        = string
@@ -85,6 +86,21 @@ variable "image_tag" {
   validation {
     condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+(@sha256:[0-9a-f]{64})?$", var.image_tag))
     error_message = "image_tag must be an immutable vX.Y.Z tag, optionally with @sha256:<digest>. \"latest\" and moving major tags are refused."
+  }
+
+  # Semver floor: >= v0.20.0, the first release expected to contain the
+  # `server` selector. try() makes a malformed tag pass this block (regex()
+  # errors on no match, and `||` does not short-circuit on Terraform 1.10), so
+  # the format check above owns that message. Patch is irrelevant to the
+  # floor. If the selector ships in a different release, move both numbers
+  # here and in the message.
+  validation {
+    condition = try(
+      tonumber(regex("^v([0-9]+)\\.([0-9]+)\\.", var.image_tag)[0]) > 0 ||
+      tonumber(regex("^v([0-9]+)\\.([0-9]+)\\.", var.image_tag)[1]) >= 20,
+      true
+    )
+    error_message = "image_tag must be v0.20.0 or later: earlier adrkit releases do not contain the `server` selector (ADR-0055)."
   }
 }
 
@@ -95,7 +111,10 @@ variable "sync_image" {
     used only so the job resource can exist; it does not implement the sync
     and writes no corpus. Replace it once a sync image implementing ADR-0056
     clause 4 (shallow clone, write `<key>.next/`, write .adrkit-corpus.json
-    last, two-move swap) is published.
+    last, two-move swap) is published. It must write, for each repos[].key,
+    `<share>/<key>/docs/adr/...` and `<share>/<key>/.adrkit-corpus.json`: the
+    layout the server reads through ADRKIT_SERVER_ROOT and
+    ADRKIT_SERVER_CORPORA.
   EOT
   type        = string
   default     = "mcr.microsoft.com/k8se/quickstart-jobs:latest"
@@ -109,10 +128,13 @@ variable "sync_cron" {
 
 variable "repos" {
   description = <<-EOT
-    Repositories whose docs/adr corpus is synced and served. `key` is the
-    `{corpus}` path segment of ADR-0055 (^[a-z0-9][a-z0-9-]{0,63}$). `url` is
-    the HTTPS clone URL, `ref` the branch or tag to follow, and `private`
-    marks repositories read through the GitHub App (ADR-0056 clause 5).
+    Repositories whose docs/adr corpus is synced and served; at least one. `key`
+    is the `{corpus}` path segment of ADR-0055 (^[a-z0-9][a-z0-9-]{0,63}$),
+    the directory `<share>/<key>` the sync job writes, and the portal path
+    `/portal/<key>/`. `url` is the HTTPS clone URL, `ref` the branch or tag to
+    follow, and `private` marks repositories read through the GitHub App
+    (ADR-0056 clause 5). With exactly one entry, the gateway's portal root
+    redirects to that corpus's portal.
   EOT
   type = list(object({
     key     = string
@@ -120,7 +142,14 @@ variable "repos" {
     ref     = optional(string, "main")
     private = optional(bool, false)
   }))
-  default = []
+
+  # The server refuses to start with an empty ADRKIT_SERVER_CORPORA
+  # (packages/server/src/config.ts, "corpora-missing"), so an empty list
+  # would leave the server app crash-looping.
+  validation {
+    condition     = length(var.repos) > 0
+    error_message = "repos must name at least one repository: the server refuses to start with no corpus."
+  }
 
   validation {
     condition     = alltrue([for r in var.repos : can(regex("^[a-z0-9][a-z0-9-]{0,63}$", r.key))])
