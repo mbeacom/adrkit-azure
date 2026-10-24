@@ -48,7 +48,7 @@ jobs:
         # Best effort: a pull request from a fork never gets
         # security-events: write. The scan step above is what blocks.
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
         with:
           sarif_file: checkov.sarif
           category: checkov
@@ -94,7 +94,7 @@ jobs:
         # Best effort: a pull request from a fork never gets
         # security-events: write. The scan step above is what blocks.
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
         with:
           sarif_file: trivy-results.sarif
           category: trivy
@@ -116,7 +116,7 @@ jobs:
       # action reports through annotations instead of a SARIF upload. Either
       # way a finding fails the job.
       - name: zizmor
-        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482  # v0.6.4
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e  # v0.7.1
         with:
           version: 1.30.1
           advanced-security: ${{ github.event.pull_request.head.repo.fork != true }}
